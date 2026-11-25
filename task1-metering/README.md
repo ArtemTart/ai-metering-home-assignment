@@ -21,11 +21,19 @@ npm test          # all tests (unit, HTTP integration, multi-process concurrency
 npm run typecheck
 ```
 
-### Configuration (environment variables)
+### Configuration
+
+Configuration comes from environment variables. `npm start` loads [`.env`](.env), which holds non-secret local settings and is committed so a clean clone works. Variables already set in your shell override it, e.g. `DEFAULT_CREDIT_LIMIT=10 npm start`.
+
+**The credit limit (X)** is resolved per request in this order:
+
+1. A per-user override: `PUT /v1/users/:userId/limit`
+2. The default set via the API: `PUT /v1/config/default-limit`. It is stored in the DB, so it survives restarts and is shared by all instances. `DELETE` reverts it.
+3. `DEFAULT_CREDIT_LIMIT` from the environment or `.env` (5 in `.env`)
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `DEFAULT_CREDIT_LIMIT` | `100` | Credits per user per period (X) |
+| `DEFAULT_CREDIT_LIMIT` | `5` in `.env` (`100` if unset) | Fallback credits per user per period (X) |
 | `QUOTA_PERIOD` | `month` | `hour`, `day` or `month` (calendar-aligned, UTC) |
 | `AI_TIMEOUT_MS` | `3000` | AI call timeout; on timeout the credit is refunded |
 | `AI_MIN_DELAY_MS` / `AI_MAX_DELAY_MS` | `200` / `1500` | Simulated AI latency range |
@@ -52,6 +60,11 @@ curl 'localhost:3000/v1/users/alice/ledger?limit=20'
 
 # Per-user limit override (an admin operation; unauthenticated in this demo)
 curl -X PUT localhost:3000/v1/users/alice/limit -H 'content-type: application/json' -d '{"limit":5}'
+
+# Default limit for all users without an override: read, change at runtime, revert to the env value
+curl localhost:3000/v1/config/default-limit
+curl -X PUT localhost:3000/v1/config/default-limit -H 'content-type: application/json' -d '{"limit":10}'
+curl -X DELETE localhost:3000/v1/config/default-limit
 ```
 
 | Status | When |
@@ -79,12 +92,12 @@ The ledger is append-only, and SQLite triggers reject deletes and rewrites.
 - Reserve, commit or refund, with refunds on AI errors and timeouts.
 - Idempotency keys: replay, body-mismatch conflict, in-flight conflict, and a new attempt allowed after a refunded failure.
 - Fixed UTC periods (hour, day or month); a request straddling a boundary is counted in the period it was reserved in.
-- Per-user limit overrides, effective immediately (no clawback when a limit is lowered).
+- Per-user limit overrides and a runtime-adjustable default limit, both effective immediately (no clawback when a limit is lowered).
 - Fail-closed behavior when the database is unavailable; settlement retries; the orphaned-reservation reaper.
 - Ledger immutability enforced by the database; a ledger endpoint for audits.
 - Graceful shutdown that waits for in-flight requests to settle.
 
-## Tests (58)
+## Tests (69)
 
 - `tests/metering.test.ts`: the quota, periods, settlement races, idempotency states, immutability, and a randomized test that the counters always equal the ledger.
 - `tests/api.test.ts`: every HTTP status path, parallel requests (exactly `limit` succeed), timeouts, store outage, settlement failure recovered by the reaper, and validation.

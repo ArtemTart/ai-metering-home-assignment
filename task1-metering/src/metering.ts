@@ -29,6 +29,13 @@ export interface StoredResponse {
   result: string;
 }
 
+export interface DefaultLimit {
+  limit: number;
+  /** `api`: set at runtime and stored in the DB; `env`: the DEFAULT_CREDIT_LIMIT fallback. */
+  source: 'api' | 'env';
+  updatedAt: string | null;
+}
+
 export type ReserveOutcome =
   | { kind: 'reserved'; requestId: string }
   | { kind: 'quota_exceeded'; usage: Usage }
@@ -76,6 +83,12 @@ function prepareStatements(db: Db) {
         WHERE user_id = ? AND idempotency_key = ? AND status <> 'REFUNDED'`,
     ),
     limitOverride: db.prepare(`SELECT credit_limit FROM user_quota_limit WHERE user_id = ?`),
+    defaultLimit: db.prepare(`SELECT value, updated_at FROM quota_config WHERE key = 'default_limit'`),
+    upsertDefaultLimit: db.prepare(
+      `INSERT INTO quota_config (key, value, updated_at) VALUES ('default_limit', ?, ?)
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    ),
+    deleteDefaultLimit: db.prepare(`DELETE FROM quota_config WHERE key = 'default_limit'`),
     upsertLimit: db.prepare(
       `INSERT INTO user_quota_limit (user_id, credit_limit, updated_at) VALUES (?, ?, ?)
        ON CONFLICT (user_id) DO UPDATE SET credit_limit = excluded.credit_limit, updated_at = excluded.updated_at`,
@@ -190,6 +203,26 @@ export class MeteringService {
     });
   }
 
+  getDefaultLimit(): DefaultLimit {
+    return this.store(() => this.defaultLimit());
+  }
+
+  /** Applies to every user without a per-user override, from their next request. */
+  setDefaultLimit(limit: number): DefaultLimit {
+    return this.store(() => {
+      this.stmt.upsertDefaultLimit.run(limit, this.clock().toISOString());
+      return this.defaultLimit();
+    });
+  }
+
+  /** Reverts to the environment value. */
+  resetDefaultLimit(): DefaultLimit {
+    return this.store(() => {
+      this.stmt.deleteDefaultLimit.run();
+      return this.defaultLimit();
+    });
+  }
+
   listLedger(userId: string, max = 100): LedgerEntry[] {
     return this.store(() => this.stmt.ledgerForUser.all(userId, max) as LedgerEntry[]);
   }
@@ -256,9 +289,17 @@ export class MeteringService {
     };
   }
 
+  /** Precedence: per-user override, then the default set via the API, then the environment default. */
   private limitFor(userId: string): number {
     const row = this.stmt.limitOverride.get(userId) as { credit_limit: number } | undefined;
-    return row?.credit_limit ?? this.options.defaultLimit;
+    return row?.credit_limit ?? this.defaultLimit().limit;
+  }
+
+  private defaultLimit(): DefaultLimit {
+    const row = this.stmt.defaultLimit.get() as { value: number; updated_at: string } | undefined;
+    return row
+      ? { limit: row.value, source: 'api', updatedAt: row.updated_at }
+      : { limit: this.options.defaultLimit, source: 'env', updatedAt: null };
   }
 
   /** Infrastructure failures become StoreUnavailableError (-> 503); programming errors propagate as-is. */

@@ -240,12 +240,35 @@ describe('usage, limit and ledger endpoints', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('changes the default limit for everyone at runtime, and reverts to the env value', async () => {
+    t = createTestApp();
+    const defaultLimit = (method: 'GET' | 'PUT' | 'DELETE', payload?: object) =>
+      t.app.inject({ method, url: '/v1/config/default-limit', payload });
+
+    expect((await defaultLimit('GET')).json()).toEqual({ limit: 3, source: 'env', updatedAt: null });
+
+    const put = await defaultLimit('PUT', { limit: 1 });
+    expect(put.json()).toEqual({ limit: 1, source: 'api', updatedAt: '2026-03-15T12:00:00.000Z' });
+    expect((await aiRequest(t)).statusCode).toBe(200);
+    expect((await aiRequest(t)).statusCode).toBe(429);
+
+    expect((await defaultLimit('DELETE')).json()).toMatchObject({ limit: 3, source: 'env' });
+    expect((await aiRequest(t)).statusCode).toBe(200);
+  });
+
+  it.each([[-1], [1.5], ['ten'], [null]])('rejects an invalid default limit (%s)', async (limit) => {
+    t = createTestApp();
+    const res = await t.app.inject({ method: 'PUT', url: '/v1/config/default-limit', payload: { limit } });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('publishes an OpenAPI spec covering every endpoint', async () => {
     t = createTestApp();
     const spec = (await t.app.inject({ method: 'GET', url: '/docs/json' })).json();
     expect(Object.keys(spec.paths).sort()).toEqual([
       '/health',
       '/v1/ai/requests',
+      '/v1/config/default-limit',
       '/v1/users/{userId}/ledger',
       '/v1/users/{userId}/limit',
       '/v1/users/{userId}/usage',

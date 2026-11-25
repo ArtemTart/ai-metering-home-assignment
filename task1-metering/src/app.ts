@@ -37,6 +37,13 @@ const userParams = {
   properties: { userId: USER_ID },
 } as const;
 
+const limitBody = {
+  type: 'object',
+  required: ['limit'],
+  additionalProperties: false,
+  properties: { limit: { type: 'integer', minimum: 0, maximum: 1_000_000_000 } },
+} as const;
+
 interface AiRequestRoute {
   Headers: { 'x-user-id': string; 'idempotency-key'?: string };
   Body: { prompt: string };
@@ -239,7 +246,7 @@ export function buildApp(deps: AppDeps) {
       async (request) => ({ entries: metering.listLedger(request.params.userId, request.query.limit) }),
     );
 
-    // Admin endpoint. Unauthenticated here; in production it would sit behind admin auth.
+    // Admin endpoints. Unauthenticated here; in production they would sit behind admin auth.
     api.put<UserRoute & { Body: { limit: number } }>(
       '/v1/users/:userId/limit',
       {
@@ -247,15 +254,35 @@ export function buildApp(deps: AppDeps) {
           tags: ['admin'],
           summary: 'Set a per-user credit limit (takes effect immediately)',
           params: userParams,
-          body: {
-            type: 'object',
-            required: ['limit'],
-            additionalProperties: false,
-            properties: { limit: { type: 'integer', minimum: 0, maximum: 1_000_000_000 } },
-          },
+          body: limitBody,
         },
       },
       async (request) => metering.setLimit(request.params.userId, request.body.limit),
+    );
+
+    api.get(
+      '/v1/config/default-limit',
+      { schema: { tags: ['admin'], summary: 'Default credit limit and where it comes from (api or env)' } },
+      async () => metering.getDefaultLimit(),
+    );
+
+    api.put<{ Body: { limit: number } }>(
+      '/v1/config/default-limit',
+      {
+        schema: {
+          tags: ['admin'],
+          summary: 'Set the default credit limit for all users without an override',
+          description: 'Stored in the database, so it survives restarts and is shared by all instances. Overrides DEFAULT_CREDIT_LIMIT.',
+          body: limitBody,
+        },
+      },
+      async (request) => metering.setDefaultLimit(request.body.limit),
+    );
+
+    api.delete(
+      '/v1/config/default-limit',
+      { schema: { tags: ['admin'], summary: 'Revert the default credit limit to DEFAULT_CREDIT_LIMIT' } },
+      async () => metering.resetDefaultLimit(),
     );
 
     api.get('/health', { schema: { tags: ['admin'], summary: 'Liveness and store health' } }, async (_request, reply) => {

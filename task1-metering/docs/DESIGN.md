@@ -66,7 +66,7 @@ sequenceDiagram
 
 - `POST /v1/ai/requests` — headers `X-User-Id` (in production derived from the auth token, never from the body) and optional `Idempotency-Key`. Responses: `200`, `400` (invalid input), `409` (idempotency conflict), `413` (body too large), `429` (quota exceeded), `502` (AI failed, refunded), `503` (store or provider unavailable, not charged), `504` (AI timeout, refunded).
 - `GET /v1/users/:userId/usage` → `{ limit, used, reserved, remaining, periodStart, periodEnd }`, where `remaining = max(0, limit − used − reserved)`. In-flight reservations count against the quota; otherwise parallel requests could overspend.
-- `GET /v1/users/:userId/ledger` returns the user's evidence rows for audits. `PUT /v1/users/:userId/limit` sets a per-user limit (an admin operation).
+- `GET /v1/users/:userId/ledger` returns the user's evidence rows for audits. `PUT /v1/users/:userId/limit` sets a per-user limit. `GET/PUT/DELETE /v1/config/default-limit` reads, changes or reverts the default for everyone else. Both are admin operations.
 
 ---
 
@@ -101,9 +101,12 @@ user_period_usage (
   PRIMARY KEY (user_id, period_start)
 );
 
--- Per-user overrides. The global default limit and the period (hour|day|month) come from configuration.
+-- Limit resolution: per-user override → default set via API → DEFAULT_CREDIT_LIMIT env. Period comes from config.
+quota_config      (key TEXT PRIMARY KEY, value INTEGER NOT NULL CHECK (value >= 0), updated_at TEXT);  -- 'default_limit'
 user_quota_limit  (user_id TEXT PRIMARY KEY, credit_limit INTEGER NOT NULL CHECK (credit_limit >= 0), updated_at TEXT);
 ```
+
+The runtime default lives in the database rather than in process memory, so every instance sees the same value and it survives restarts. The environment value is only a fallback.
 
 Immutability is enforced in the database itself, not only by application code: triggers reject any `DELETE` on the ledger and any `UPDATE` other than a single `RESERVED → COMMITTED/REFUNDED` transition. SQLite runs with `synchronous = FULL`, so a committed evidence row survives power loss.
 
@@ -224,7 +227,7 @@ Observability: metrics for reservations, commits, refunds by reason, 429 rate, r
 | `POST /v1/ai/requests` with simulated AI (random delay and failure) | Yes | AI client and clock are injectable for deterministic tests. |
 | Atomic reserve → commit/refund, ledger as evidence | Yes | SQLite with `better-sqlite3`; immutability enforced by DB triggers. |
 | `GET /v1/users/:userId/usage`, `GET …/ledger`, `PUT …/limit` | Yes | |
-| Configurable default limit, per-user override, period | Yes | Default and period via environment variables; overrides via `PUT …/limit`. |
+| Configurable default limit, per-user override, period | Yes | Default via `.env` or the environment, changeable at runtime via `PUT /v1/config/default-limit`; per-user overrides via `PUT …/limit`; period via the environment. |
 | Idempotency keys (replay, conflict, in-flight, retry after refund) | Yes | |
 | AI timeout and refund; settlement retries | Yes | |
 | Fail closed when the store is down (503) | Yes | |

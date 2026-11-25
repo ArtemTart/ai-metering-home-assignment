@@ -35,6 +35,13 @@ CREATE TABLE IF NOT EXISTS user_period_usage (
   PRIMARY KEY (user_id, period_start)
 );
 
+-- Runtime-adjustable settings (set via the API). A missing row means "use the environment value".
+CREATE TABLE IF NOT EXISTS quota_config (
+  key        TEXT PRIMARY KEY,
+  value      INTEGER NOT NULL CHECK (value >= 0),
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS user_quota_limit (
   user_id      TEXT PRIMARY KEY,
   credit_limit INTEGER NOT NULL CHECK (credit_limit >= 0),

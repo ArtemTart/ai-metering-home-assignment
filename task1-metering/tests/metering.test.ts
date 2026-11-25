@@ -98,6 +98,43 @@ describe('MeteringService', () => {
     });
   });
 
+  describe('default limit', () => {
+    it('falls back to the environment value until one is set via the API', () => {
+      expect(metering.getDefaultLimit()).toEqual({ limit: 3, source: 'env', updatedAt: null });
+    });
+
+    it('applies an API-set default to users without an override, from their next request', () => {
+      for (let i = 0; i < 3; i++) reserve();
+      expect(reserve().kind).toBe('quota_exceeded');
+
+      expect(metering.setDefaultLimit(5)).toMatchObject({ limit: 5, source: 'api' });
+      expect(reserve().kind).toBe('reserved');
+      expect(metering.getUsage('bob').limit).toBe(5);
+    });
+
+    it('never overrides a per-user limit', () => {
+      metering.setLimit('alice', 1);
+      metering.setDefaultLimit(50);
+      expect(metering.getUsage('alice').limit).toBe(1);
+    });
+
+    it('reverts to the environment value on reset', () => {
+      metering.setDefaultLimit(50);
+      expect(metering.resetDefaultLimit()).toEqual({ limit: 3, source: 'env', updatedAt: null });
+      expect(metering.getUsage('alice').limit).toBe(3);
+    });
+
+    it('is persisted, so a restarted instance with a different env value still uses it', () => {
+      metering.setDefaultLimit(7);
+      const restarted = new MeteringService(db, { defaultLimit: 999, period: 'month' }, time.clock);
+      expect(restarted.getUsage('alice').limit).toBe(7);
+    });
+
+    it('rejects a negative default at the database level', () => {
+      expect(() => metering.setDefaultLimit(-1)).toThrow(/CHECK/);
+    });
+  });
+
   describe('periods', () => {
     it('starts a fresh quota in the next period', () => {
       for (let i = 0; i < 3; i++) reserve();
