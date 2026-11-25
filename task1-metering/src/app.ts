@@ -44,6 +44,12 @@ export function buildApp({ quota, ai, aiTimeoutMs, logger = false }: AppDeps) {
         description: 'Every AI request costs one credit. Each user has a limited number of credits per period.',
         version: '1.0.0',
       },
+      // Swagger UI groups operations by tag, in this order.
+      tags: [
+        { name: 'AI', description: 'Metered AI requests' },
+        { name: 'Usage', description: "A user's own usage" },
+        { name: 'Admin', description: 'All users, raw evidence and quota management (unauthenticated in this demo)' },
+      ],
     },
   });
   app.register(swaggerUi, { routePrefix: '/docs' });
@@ -54,6 +60,7 @@ export function buildApp({ quota, ai, aiTimeoutMs, logger = false }: AppDeps) {
       '/v1/ai/requests',
       {
         schema: {
+          tags: ['AI'],
           summary: 'Send an AI request for a user (costs 1 credit)',
           description: 'A failed or timed-out AI call is refunded, but still recorded as evidence.',
           headers: { type: 'object', required: ['x-user-id'], properties: { 'x-user-id': userId } },
@@ -106,6 +113,7 @@ export function buildApp({ quota, ai, aiTimeoutMs, logger = false }: AppDeps) {
       '/v1/users/:userId/usage',
       {
         schema: {
+          tags: ['Usage'],
           summary: "A user's current usage and remaining credits",
           params: { type: 'object', required: ['userId'], properties: { userId } },
           response: { 200: usageSchema },
@@ -119,6 +127,7 @@ export function buildApp({ quota, ai, aiTimeoutMs, logger = false }: AppDeps) {
       '/v1/users',
       {
         schema: {
+          tags: ['Admin'],
           summary: 'All users with their limit and usage in the current period',
           response: {
             200: {
@@ -152,6 +161,7 @@ export function buildApp({ quota, ai, aiTimeoutMs, logger = false }: AppDeps) {
       '/v1/usage-events',
       {
         schema: {
+          tags: ['Admin'],
           summary: 'Raw usage records (the evidence table), newest first, max 500',
           querystring: { type: 'object', properties: { userId } },
           response: {
@@ -180,6 +190,7 @@ export function buildApp({ quota, ai, aiTimeoutMs, logger = false }: AppDeps) {
       '/v1/users/:userId/quota',
       {
         schema: {
+          tags: ['Admin'],
           summary: "Set a user's credit limit (takes effect on their next request)",
           params: { type: 'object', required: ['userId'], properties: { userId } },
           body: {
@@ -198,6 +209,7 @@ export function buildApp({ quota, ai, aiTimeoutMs, logger = false }: AppDeps) {
       '/v1/users/:userId/quota',
       {
         schema: {
+          tags: ['Admin'],
           summary: "Remove a user's custom limit, reverting to the default",
           params: { type: 'object', required: ['userId'], properties: { userId } },
           response: { 200: usageSchema },
