@@ -12,6 +12,10 @@ import type {
 import { periodBounds } from '../utils/period.js';
 
 export function createQuotaService(db: Db, options: QuotaOptions, clock: Clock = () => new Date()) {
+  if (!Number.isInteger(options.defaultLimit) || options.defaultLimit < 0) {
+    throw new Error(`defaultLimit must be a non-negative integer, got ${options.defaultLimit}`);
+  }
+
   const userLimit = db.prepare(`SELECT credit_limit FROM user_quotas WHERE user_id = ?`);
   const upsertUserLimit = db.prepare(
     `INSERT INTO user_quotas (user_id, credit_limit, updated_at) VALUES (?, ?, ?)
@@ -58,7 +62,7 @@ export function createQuotaService(db: Db, options: QuotaOptions, clock: Clock =
   // even across processes sharing the database file.
   const reserveTx = db.transaction((userId: string): ReserveResult => {
     const current = usage(userId);
-    if (current.remaining === 0) return { ok: false, usage: current };
+    if (!(current.remaining > 0)) return { ok: false, usage: current };
     const eventId = randomUUID();
     insertEvent.run(eventId, userId, current.periodStart, clock().toISOString());
     return { ok: true, eventId };
