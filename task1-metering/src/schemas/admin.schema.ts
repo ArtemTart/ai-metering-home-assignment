@@ -59,7 +59,9 @@ export const setQuotaSchema = {
     type: 'object',
     required: ['limit'],
     additionalProperties: false,
-    properties: { limit: { type: 'integer', minimum: 0, maximum: 1_000_000_000 } },
+    properties: {
+      limit: { type: 'integer', minimum: 0, maximum: 1_000_000_000, description: 'Whole number from 0 (blocked) to 1,000,000,000' },
+    },
   },
   response: { 200: usageSchema },
 } as const;

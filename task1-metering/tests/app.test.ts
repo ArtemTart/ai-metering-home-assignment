@@ -224,6 +224,49 @@ describe('PUT / DELETE /v1/users/:userId/quota', () => {
   });
 });
 
+describe('input validation on every endpoint', () => {
+  const badUserIds = ['-1', '.', '..', '---', '_admin', 'a'.repeat(65), 'alice smith'];
+
+  // Invalid user IDs (e.g. "-1", ".", "..", too long) are rejected everywhere a user ID is accepted, and nothing
+  // is written. Usually 400; "." and ".." in a URL path are resolved before routing, so those get 404.
+  it.each(badUserIds)('rejects user id "%s" on every endpoint', async (bad) => {
+    t = setup();
+    const id = encodeURIComponent(bad);
+    const responses = await Promise.all([
+      t.send(bad),
+      t.app.inject({ url: `/v1/users/${id}/usage` }),
+      t.app.inject({ method: 'PUT', url: `/v1/users/${id}/quota`, payload: { limit: 1 } }),
+      t.app.inject({ method: 'DELETE', url: `/v1/users/${id}/quota` }),
+      t.app.inject({ url: `/v1/usage-events?userId=${id}` }),
+    ]);
+    for (const res of responses) expect([400, 404]).toContain(res.statusCode);
+    expect(t.events()).toEqual([]);
+    expect(t.db.prepare('SELECT COUNT(*) AS n FROM user_quotas').get()).toEqual({ n: 0 });
+  });
+
+  // Ordinary IDs, including purely numeric ones, are still accepted.
+  it.each(['1', 'alice', 'user_42', 'a.b-c'])('accepts user id "%s"', async (good) => {
+    t = setup();
+    expect((await t.send(good)).statusCode).toBe(200);
+  });
+
+  // The limit must be a whole number between 0 and 1,000,000,000, sent as a JSON number (not "5").
+  it.each([[-1], [1_000_000_001], ['5'], [true]])('rejects quota limit %s', async (limit) => {
+    t = setup();
+    const res = await t.app.inject({ method: 'PUT', url: '/v1/users/alice/quota', payload: { limit } });
+    expect(res.statusCode).toBe(400);
+  });
+
+  // Usage can never go negative: after lowering the limit below what's used, remaining is 0, not -2.
+  it('never reports negative remaining credits', async () => {
+    t = setup({ limit: 3 });
+    await t.send();
+    await t.send();
+    await t.app.inject({ method: 'PUT', url: '/v1/users/alice/quota', payload: { limit: 0 } });
+    expect(await t.usage()).toMatchObject({ limit: 0, used: 2, remaining: 0 });
+  });
+});
+
 describe('Swagger', () => {
   // Every endpoint appears in the generated OpenAPI spec, so the docs at /docs are complete.
   it('publishes every endpoint in the spec', async () => {
