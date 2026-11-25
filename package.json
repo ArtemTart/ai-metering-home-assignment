@@ -2,11 +2,8 @@
   "name": "home-assignment",
   "version": "1.0.0",
   "private": true,
-  "description": "Developer home assignment: Task 1 (AI metering) + Task 2 (shared-state task board)",
+  "description": "Developer home assignment: two independent tasks (AI metering + shared-state task board)",
   "scripts": {
-    "test": "npm test --prefix task1-metering && npm test --prefix task2-taskboard",
-    "test:task1": "npm test --prefix task1-metering",
-    "test:task2": "npm test --prefix task2-taskboard",
-    "start": "npm start --prefix task2-taskboard"
+    "test": "npm test --prefix task1-metering && npm test --prefix task2-taskboard"
   }
 }

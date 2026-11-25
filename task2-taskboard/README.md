@@ -1,6 +1,6 @@
-# Task 2 — Shared-State Team Task Board
+# Shared-State Team Task Board
 
-Vue 3 (Composition API) + Pinia + TypeScript, with a Node.js mock server (Fastify) that pushes changes over Server-Sent Events.
+Vue 3 (Composition API) + Pinia + TypeScript, with a Node.js mock server (Fastify) that pushes changes over Server-Sent Events. This project is self-contained: run everything from this folder.
 
 ## Run
 
@@ -12,7 +12,7 @@ npm test      # store logic, components, server, config — output is in the ter
 npm run typecheck
 ```
 
-`npm start` runs the app; `npm test` runs the tests and exits. They are not the same command. From the repo root, `npm test` runs Task 1 and Task 2 together.
+`npm start` runs the app; `npm test` runs the tests and exits. They are not the same command.
 
 To list every test name:
 
@@ -81,7 +81,7 @@ A second click on the same task is ignored until the first request finishes (per
 
 **Why Pinia + `computed`:** Vue's reactivity tracks which data each `computed` value and component uses and updates exactly those, which is precisely the "derived data never out of sync" requirement. Pinia is Vue's official store: one place for the data and the actions that change it, testable without the UI. Alternatives I didn't pick: per-component state with props/events (copies drift apart, and the server updates would have to be threaded through every component); `provide`/`inject` with a plain `reactive` object (works, but Pinia adds devtools and a clearer action layer for the same effort).
 
-**Why Vue rather than React:** the assignment prefers React, but also says any approach is fine if it can be explained. Vue is the framework I know best, and being able to explain every line mattered more. The approach itself (single source of truth, computed derived data, versioned server events) carries over to React directly (`useReducer` + Context or Zustand, with selectors / `useMemo`).
+**Why Vue + Composition API:** Vue is the framework I know best, and being able to explain every line mattered more than matching a preferred alternative. The approach (single source of truth, computed derived data, versioned server events) is framework-agnostic.
 
 **Why SSE:** updates only flow server → client (user changes go through normal REST calls), so a one-way stream is enough. It's plain HTTP, needs no library, and `EventSource` reconnects automatically. WebSocket would add a protocol and manual reconnect logic for no gain; polling would add delay and wasted requests.
 
