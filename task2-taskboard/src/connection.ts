@@ -12,7 +12,12 @@ export function connectToServer(store: ReturnType<typeof useBoardStore>, url = '
   source.onopen = () => (store.connection = 'live');
   source.onerror = () => (store.connection = 'offline');
   source.onmessage = (message: MessageEvent<string>) => {
-    store.applyEvent(JSON.parse(message.data) as ServerEvent);
+    // One bad frame must not kill the handler — ignore it and keep listening.
+    try {
+      store.applyEvent(JSON.parse(message.data) as ServerEvent);
+    } catch {
+      /* malformed or unexpected payload */
+    }
   };
   return () => source.close();
 }

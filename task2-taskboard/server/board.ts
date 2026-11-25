@@ -23,7 +23,16 @@ export function createBoard(initial: NewTask[] = [], { maxActivity = 50, now = (
     activity.length = Math.min(activity.length, maxActivity);
     return entry;
   };
-  const publish = (event: ServerEvent) => subscribers.forEach((send) => send(event));
+  // A dead SSE socket must not stop delivery to everyone else — drop the bad subscriber and continue.
+  const publish = (event: ServerEvent) => {
+    for (const send of [...subscribers]) {
+      try {
+        send(event);
+      } catch {
+        subscribers.delete(send);
+      }
+    }
+  };
 
   const describe = (before: Task, patch: TaskPatch) =>
     Object.entries(patch)

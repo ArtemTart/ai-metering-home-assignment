@@ -25,8 +25,22 @@ export const useBoardStore = defineStore('board', () => {
   const selectedId = ref<string | null>(null);
   const connection = ref<'connecting' | 'live' | 'offline'>('connecting');
   const lastError = ref<string | null>(null);
+  /** Task IDs with an in-flight update/delete — blocks a second click until the first finishes. */
+  const pending = ref<Record<string, boolean>>({});
+  /** True while a create request is in flight. */
+  const creating = ref(false);
   /** IDs deleted in this session. A late response or event for one of them must not bring it back. */
   const deletedIds = new Set<string>();
+
+  const isPending = (id: string) => Boolean(pending.value[id]);
+  const setPending = (id: string, value: boolean) => {
+    if (value) pending.value = { ...pending.value, [id]: true };
+    else {
+      const next = { ...pending.value };
+      delete next[id];
+      pending.value = next;
+    }
+  };
 
   // ---- Derived state (never stored, always recomputed from `tasks`) ----
   const taskList = computed(() => Object.values(tasks.value).sort(byPriorityThenTitle));
@@ -103,7 +117,8 @@ export const useBoardStore = defineStore('board', () => {
    */
   async function updateTask(id: string, patch: TaskPatch): Promise<void> {
     const previous = tasks.value[id];
-    if (!previous) return;
+    if (!previous || pending.value[id]) return; // already saving this task — ignore the second click
+    setPending(id, true);
     tasks.value[id] = { ...previous, ...patch };
     try {
       receive(await api.updateTask(id, patch));
@@ -115,11 +130,15 @@ export const useBoardStore = defineStore('board', () => {
       }
       if (tasks.value[id]?.version === previous.version) tasks.value[id] = previous;
       lastError.value = `Could not save the change: ${(err as Error).message}`;
+    } finally {
+      setPending(id, false);
     }
   }
 
   /** Not optimistic: the task needs its server-assigned ID before it can be shown and edited. */
   async function createTask(input: NewTask): Promise<Task | undefined> {
+    if (creating.value) return undefined;
+    creating.value = true;
     try {
       const task = await api.createTask(input);
       receive(task);
@@ -127,13 +146,16 @@ export const useBoardStore = defineStore('board', () => {
     } catch (err) {
       lastError.value = `Could not create the task: ${(err as Error).message}`;
       return undefined;
+    } finally {
+      creating.value = false;
     }
   }
 
   /** Optimistic delete; restored if the server refuses (a 404 means it's already gone, which is fine). */
   async function deleteTask(id: string): Promise<void> {
     const previous = tasks.value[id];
-    if (!previous) return;
+    if (!previous || pending.value[id]) return;
+    setPending(id, true);
     forget(id);
     try {
       await api.deleteTask(id);
@@ -142,6 +164,8 @@ export const useBoardStore = defineStore('board', () => {
       deletedIds.delete(id);
       tasks.value[id] = previous;
       lastError.value = `Could not delete the task: ${(err as Error).message}`;
+    } finally {
+      setPending(id, false);
     }
   }
 
@@ -151,6 +175,9 @@ export const useBoardStore = defineStore('board', () => {
     selectedId,
     connection,
     lastError,
+    pending,
+    creating,
+    isPending,
     taskList,
     countsByStatus,
     countsByAssignee,

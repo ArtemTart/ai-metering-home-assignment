@@ -8,7 +8,7 @@ Requires Node.js 20.6+.
 
 ```bash
 npm start     # installs dependencies, starts the mock server (:3001) and the app (:5173), opens the browser
-npm test      # 40 tests: store logic, components, server, config — output is in the terminal
+npm test      # store logic, components, server, config — output is in the terminal
 npm run typecheck
 ```
 
@@ -22,9 +22,10 @@ npx vitest run --reporter=verbose
 
 | Test file | What it covers |
 |---|---|
-| `tests/store.test.ts` | Shared-state logic: versions, optimistic updates, derived counts/groupings (incl. 500 random events) |
-| `tests/components.test.ts` | One edit or server push updates every panel |
-| `tests/server.test.ts` | REST, SSE stream, simulator |
+| `tests/store.test.ts` | Shared-state logic: versions, optimistic updates, in-flight lock, derived counts/groupings |
+| `tests/components.test.ts` | One edit or server push updates every panel; "Saving…" while in flight |
+| `tests/server.test.ts` | REST, SSE stream, dead-subscriber isolation, simulator |
+| `tests/connection.test.ts` | Malformed SSE frames are ignored |
 | `tests/config.test.ts` | `.env` validation |
 
 The app is at <http://localhost:5173>. Settings are in [`.env`](.env): `PORT`, `SIMULATOR_INTERVAL_MS`, `MAX_ACTIVITY`, `MIN_TASKS` / `MAX_TASKS`, `SSE_HEARTBEAT_MS`.

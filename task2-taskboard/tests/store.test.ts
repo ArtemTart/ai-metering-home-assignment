@@ -130,11 +130,27 @@ describe('user actions', () => {
 
     const pending = store.updateTask('a', { status: 'done' });
     expect(store.tasks.a?.status).toBe('done');
+    expect(store.isPending('a')).toBe(true);
     expect(store.countsByStatus.done).toBe(1);
 
     resolve(task('a', { status: 'done', version: 2 }));
     await pending;
     expect(store.tasks.a?.version).toBe(2);
+    expect(store.isPending('a')).toBe(false);
+  });
+
+  // A second click while the first save is in flight is ignored — no overlapping PATCHes.
+  it('ignores a second update while one is in flight', async () => {
+    let resolve!: (t: Task) => void;
+    const spy = vi.spyOn(api, 'updateTask').mockReturnValue(new Promise((r) => (resolve = r)));
+
+    const first = store.updateTask('a', { status: 'done' });
+    await store.updateTask('a', { status: 'in_progress' }); // ignored
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(store.tasks.a?.status).toBe('done');
+
+    resolve(task('a', { status: 'done', version: 2 }));
+    await first;
   });
 
   // The server refused: the previous value comes back and the user sees an error.

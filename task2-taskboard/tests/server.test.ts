@@ -104,6 +104,27 @@ describe('SSE stream', () => {
   });
 });
 
+describe('SSE publish resilience', () => {
+  // A subscriber that throws (dead socket) is dropped; other subscribers still get the event.
+  it('drops a failing subscriber and keeps delivering to the rest', () => {
+    t = setup();
+    const good: ServerEvent[] = [];
+    t.board.subscribe(() => {
+      throw new Error('broken pipe');
+    });
+    t.board.subscribe((e) => good.push(e));
+    t.events.length = 0;
+
+    t.board.update(t.board.list()[0]!.id, { status: 'done' }, 'server');
+    expect(good).toHaveLength(1);
+    expect(good[0]).toMatchObject({ type: 'task.upserted' });
+
+    // The broken subscriber was removed — a second publish must not throw.
+    expect(() => t.board.update(t.board.list()[0]!.id, { priority: 'high' }, 'server')).not.toThrow();
+    expect(good).toHaveLength(2);
+  });
+});
+
 describe('simulator', () => {
   // The simulated "other side" keeps changing tasks, and every change is broadcast like a user's.
   it('makes random changes that are broadcast', () => {

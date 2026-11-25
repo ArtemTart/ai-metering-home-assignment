@@ -19,10 +19,10 @@ What the local demo would need before real multi-user traffic. The shared-state 
 
 | Issue | Severity | Where | Fix |
 |---|---|---|---|
-| **SSE `write` to a dead socket can throw** and stop `publish` mid-loop, so later subscribers miss the event | Medium | `server/board.ts` `publish` | Wrap each `send` in try/catch; unsubscribe on failure |
-| **`JSON.parse` on SSE messages has no try/catch** — one bad frame crashes the handler | Low | `src/connection.ts` | try/catch + log; ignore the frame |
+| ~~**SSE `write` to a dead socket can throw**~~ | — | — | **Fixed:** try/catch in `publish`; dead subscriber dropped |
+| ~~**`JSON.parse` on SSE messages has no try/catch**~~ | — | — | **Fixed:** bad frames ignored in `connection.ts` |
 | **`deletedIds` grows forever** until a reconnect clears it | Low | `src/stores/board.ts` | Cap the set, or drop IDs older than N minutes |
-| **Double-click / rapid inline edits** can fire two overlapping `PATCH`es; last response wins, order not guaranteed | Medium | `TaskList.vue` / store | Disable the control while the request is in flight, or queue per task id |
+| ~~**Double-click / rapid inline edits**~~ | — | — | **Fixed:** per-task `pending` lock + "Saving…" in the UI |
 | **No optimistic locking on `PATCH`** — client doesn't send the version it based the edit on, so silent overwrite of the same field is possible | Medium | API | Require `If-Match: version` (or body `baseVersion`); return 409 on mismatch |
 | **Invalid `VITE_MAX_ACTIVITY`** becomes `NaN` and breaks the activity slice | Low | store | Validate / fall back to 50 |
 | **Two open tabs both act as `"user"`** — activity can't tell who did what | Expected for demo | — | Real auth + display name |
@@ -64,7 +64,7 @@ flowchart LR
 
 ## Recommended order
 
-1. Fix SSE publish try/catch and in-flight edit guard (small, real bugs).
+1. ~~Fix SSE publish try/catch and in-flight edit guard~~ (done).
 2. Persist to PostgreSQL + auth.
 3. Version check on `PATCH` (409).
 4. Redis pub/sub for multi-instance SSE.

@@ -81,6 +81,25 @@ describe('components share one state', () => {
   });
 });
 
+describe('saving indicator', () => {
+  // While a save is in flight, the row shows "Saving…" and its controls are disabled.
+  it('disables the row and shows Saving… while an update is in flight', async () => {
+    let resolve!: (t: Task) => void;
+    vi.spyOn(api, 'updateTask').mockReturnValue(new Promise((r) => (resolve = r)));
+    const { wrapper } = mountBoard([task('a')]);
+
+    const pending = wrapper.get('[data-testid="row-a"] select[aria-label="Status"]').setValue('done');
+    await flushPromises();
+    expect(wrapper.get('[data-testid="saving"]').text()).toBe('Saving…');
+    expect((wrapper.get('[data-testid="row-a"] select[aria-label="Status"]').element as HTMLSelectElement).disabled).toBe(true);
+
+    resolve(task('a', { status: 'done', version: 2 }));
+    await pending;
+    await flushPromises();
+    expect(wrapper.find('[data-testid="saving"]').exists()).toBe(false);
+  });
+});
+
 describe('editor edge cases', () => {
   // The server changes the task while the user has unsaved edits: the draft is kept and a notice is shown.
   it("keeps the user's draft and warns when the task changes remotely", async () => {

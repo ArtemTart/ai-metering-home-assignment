@@ -99,8 +99,10 @@ async function save() {
       </label>
 
       <div class="actions">
-        <button type="submit" :disabled="!isDirty || !draft.title.trim()">Save</button>
-        <button type="button" :disabled="!isDirty" @click="loadLatest">Cancel</button>
+        <button type="submit" :disabled="!isDirty || !draft.title.trim() || store.isPending(store.selectedId!)">
+          {{ store.isPending(store.selectedId!) ? 'Saving…' : 'Save' }}
+        </button>
+        <button type="button" :disabled="!isDirty || store.isPending(store.selectedId!)" @click="loadLatest">Cancel</button>
       </div>
     </form>
   </section>

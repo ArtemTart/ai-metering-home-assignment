@@ -64,7 +64,10 @@ export function buildServer(board: Board, { heartbeatMs = 15_000 } = {}) {
       'cache-control': 'no-cache',
       connection: 'keep-alive',
     });
-    const send = (event: ServerEvent) => reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+    const send = (event: ServerEvent) => {
+      if (reply.raw.destroyed || !reply.raw.writable) throw new Error('SSE connection closed');
+      reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
 
     // Subscribe and snapshot in the same synchronous step, so no change can fall between them.
     const unsubscribe = board.subscribe(send);

@@ -7,7 +7,7 @@ Requires Node.js 20.6+.
 ## From the repo root
 
 ```bash
-npm test    # run all tests (Task 1: 83 + Task 2: 40), then exit
+npm test    # run all tests (Task 1 + Task 2), then exit
 npm start   # start Task 2 (task board) at http://localhost:5173
 ```
 
