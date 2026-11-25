@@ -57,6 +57,13 @@ export function createQuotaService(db: Db, options: QuotaOptions, clock: Clock =
     `SELECT status, request_hash, response FROM usage_events
       WHERE user_id = ? AND idempotency_key = ? AND status <> 'REFUNDED'`,
   );
+  // Fallback for requests without a key: the latest same-prompt request from this user since the cutoff.
+  const findRecentSame = db.prepare(
+    `SELECT status, request_hash, response FROM usage_events
+      WHERE user_id = ? AND idempotency_key IS NULL AND request_hash = ? AND created_at >= ? AND status <> 'REFUNDED'
+      ORDER BY created_at DESC LIMIT 1`,
+  );
+  const dedupeWindowMs = (options.dedupeWindowSeconds ?? 0) * 1000;
 
   function usage(userId: string): Usage {
     const { start, end } = periodBounds(clock(), options.period);
@@ -70,15 +77,17 @@ export function createQuotaService(db: Db, options: QuotaOptions, clock: Clock =
   // IMMEDIATE takes SQLite's write lock before the count, so check-and-insert is atomic
   // even across processes sharing the database file.
   const reserveTx = db.transaction(({ userId, idempotencyKey, requestHash }: ReserveInput): ReserveResult => {
+    let previous: { status: UsageStatus; request_hash: string; response: string | null } | undefined;
     if (idempotencyKey) {
-      const previous = findByKey.get(userId, idempotencyKey) as
-        | { status: UsageStatus; request_hash: string; response: string | null }
-        | undefined;
-      if (previous) {
-        if (previous.request_hash !== requestHash) return { kind: 'key_reused' };
-        if (previous.status === 'RESERVED') return { kind: 'in_progress' };
-        return { kind: 'replay', response: JSON.parse(previous.response!) as StoredResponse };
-      }
+      previous = findByKey.get(userId, idempotencyKey) as typeof previous;
+    } else if (dedupeWindowMs > 0) {
+      const cutoff = new Date(clock().getTime() - dedupeWindowMs).toISOString();
+      previous = findRecentSame.get(userId, requestHash, cutoff) as typeof previous;
+    }
+    if (previous) {
+      if (previous.request_hash !== requestHash) return { kind: 'key_reused' };
+      if (previous.status === 'RESERVED') return { kind: 'in_progress' };
+      return { kind: 'replay', response: JSON.parse(previous.response!) as StoredResponse };
     }
 
     const current = usage(userId);

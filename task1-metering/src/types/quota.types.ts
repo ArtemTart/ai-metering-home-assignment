@@ -6,6 +6,8 @@ export interface QuotaOptions {
   /** Used for users without a row in user_quotas. */
   defaultLimit: number;
   period: Period;
+  /** Without an Idempotency-Key, the same prompt from the same user within this window is treated as a retry. 0 = off. */
+  dedupeWindowSeconds?: number;
 }
 
 export interface PeriodBounds {

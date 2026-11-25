@@ -6,12 +6,12 @@ import { createQuotaService } from '../src/services/quota.service.js';
 import { periodBounds } from '../src/utils/period.js';
 
 /** Builds the app with an in-memory DB, a controllable clock and an AI that answers instantly unless told otherwise. */
-function setup({ limit = 3, aiTimeoutMs = 50 } = {}) {
+function setup({ limit = 3, aiTimeoutMs = 50, dedupeWindowSeconds = 0 } = {}) {
   const db = openDb(':memory:');
   let now = new Date('2026-03-15T12:00:00.000Z');
   const ai = { mode: 'ok' as 'ok' | 'fail' | 'hang', calls: 0 };
   const app = buildApp({
-    quota: createQuotaService(db, { defaultLimit: limit, period: 'month' }, () => now),
+    quota: createQuotaService(db, { defaultLimit: limit, period: 'month', dedupeWindowSeconds }, () => now),
     ai: async (prompt) => {
       ai.calls++;
       if (ai.mode === 'fail') throw new Error('boom');
@@ -209,6 +209,69 @@ describe('Idempotency-Key', () => {
   it.each([['has spaces'], ['a'.repeat(129)], ['ключ']])('rejects an invalid key (%s)', async (key) => {
     t = setup();
     expect((await t.send('alice', hi, key)).statusCode).toBe(400);
+  });
+});
+
+describe('Automatic dedupe (no Idempotency-Key)', () => {
+  const hi = { prompt: 'hi' };
+
+  // Same user + same prompt inside the window = a retry: replayed, AI called once, one credit.
+  it('replays the same prompt sent again within the window', async () => {
+    t = setup({ dedupeWindowSeconds: 10 });
+    const first = await t.send('alice', hi);
+    t.setNow('2026-03-15T12:00:09.000Z');
+    const retry = await t.send('alice', hi);
+
+    expect(retry.headers['idempotent-replayed']).toBe('true');
+    expect(retry.json().requestId).toBe(first.json().requestId);
+    expect(t.ai.calls).toBe(1);
+    expect((await t.usage()).used).toBe(1);
+  });
+
+  // Retry storm without keys: 20 identical parallel requests still cost one AI call and one credit.
+  it('charges a keyless retry storm only once', async () => {
+    t = setup({ limit: 50, dedupeWindowSeconds: 10 });
+    await Promise.all(Array.from({ length: 20 }, () => t.send('alice', hi)));
+    expect(t.ai.calls).toBe(1);
+    expect((await t.usage()).used).toBe(1);
+  });
+
+  // After the window, asking the same thing again is a deliberate new request and is charged.
+  it('charges the same prompt again after the window', async () => {
+    t = setup({ dedupeWindowSeconds: 10 });
+    await t.send('alice', hi);
+    t.setNow('2026-03-15T12:00:11.000Z');
+    const again = await t.send('alice', hi);
+
+    expect(again.headers['idempotent-replayed']).toBeUndefined();
+    expect((await t.usage()).used).toBe(2);
+  });
+
+  // Only identical prompts from the same user are merged; anything else is a separate request.
+  it('does not merge different prompts or different users', async () => {
+    t = setup({ dedupeWindowSeconds: 10 });
+    await t.send('alice', { prompt: 'one' });
+    await t.send('alice', { prompt: 'two' });
+    await t.send('bob', { prompt: 'one' });
+    expect(t.ai.calls).toBe(3);
+  });
+
+  // A failed attempt gave the user nothing, so an immediate retry must really call the AI again.
+  it('retries for real after a failure', async () => {
+    t = setup({ dedupeWindowSeconds: 10 });
+    t.ai.mode = 'fail';
+    await t.send('alice', hi);
+    t.ai.mode = 'ok';
+    expect((await t.send('alice', hi)).statusCode).toBe(200);
+    expect(t.ai.calls).toBe(2);
+  });
+
+  // An explicit key wins: a new key means "this is a new request", even with the same prompt.
+  it('lets an explicit key bypass the automatic dedupe', async () => {
+    t = setup({ dedupeWindowSeconds: 10 });
+    await t.send('alice', hi, 'key-1');
+    await t.send('alice', hi, 'key-2');
+    expect(t.ai.calls).toBe(2);
   });
 });
 

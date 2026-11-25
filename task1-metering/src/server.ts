@@ -8,7 +8,11 @@ const config = loadConfig();
 const db = openDb(config.dbPath);
 
 const app = buildApp({
-  quota: createQuotaService(db, { defaultLimit: config.defaultLimit, period: config.period }),
+  quota: createQuotaService(db, {
+    defaultLimit: config.defaultLimit,
+    period: config.period,
+    dedupeWindowSeconds: config.dedupeWindowSeconds,
+  }),
   ai: simulatedAi(config.ai),
   aiTimeoutMs: config.aiTimeoutMs,
   logger: true,

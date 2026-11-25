@@ -40,6 +40,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dbPath: env.DB_PATH?.trim() || 'data/metering.db',
     defaultLimit: int('DEFAULT_CREDIT_LIMIT', 5, 0, 1_000_000_000),
     period,
+    dedupeWindowSeconds: int('DEDUPE_WINDOW_SECONDS', 10, 0, 86_400),
     ai: {
       minDelayMs: int('AI_MIN_DELAY_MS', 200, 0),
       maxDelayMs: int('AI_MAX_DELAY_MS', 1500, 0),

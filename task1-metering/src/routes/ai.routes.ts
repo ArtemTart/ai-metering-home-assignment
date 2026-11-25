@@ -14,6 +14,7 @@ export const aiRoutes: FastifyPluginAsync<AiRouteOptions> = async (api, { quota,
    * refunded, but the attempt stays in usage_events as evidence.
    * With an `Idempotency-Key`, a repeat of a finished request returns the stored answer without charging,
    * a repeat of a running one returns 409, and reusing the key for a different prompt returns 409.
+   * Without a key, the same prompt from the same user within DEDUPE_WINDOW_SECONDS is treated the same way.
    */
   api.post<AiRequestRoute>('/v1/ai/requests', { schema: aiRequestSchema }, async (request, reply) => {
     const user = request.headers['x-user-id'];
@@ -35,7 +36,7 @@ export const aiRoutes: FastifyPluginAsync<AiRouteOptions> = async (api, { quota,
       case 'in_progress':
         return reply.code(409).send({
           error: 'REQUEST_IN_PROGRESS',
-          message: 'A request with this Idempotency-Key is still running; retry shortly.',
+          message: 'The same request is still running; retry shortly.',
         });
       case 'key_reused':
         return reply.code(409).send({

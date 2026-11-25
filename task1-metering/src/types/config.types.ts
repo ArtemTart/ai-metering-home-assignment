@@ -6,6 +6,7 @@ export interface Config {
   dbPath: string;
   defaultLimit: number;
   period: Period;
+  dedupeWindowSeconds: number;
   ai: SimulatedAiOptions;
   aiTimeoutMs: number;
 }

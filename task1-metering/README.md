@@ -15,7 +15,7 @@ npm test
 
 **Swagger UI: <http://localhost:3000/docs>**
 
-Settings are in [`.env`](.env): `DEFAULT_CREDIT_LIMIT` (default 5), `QUOTA_PERIOD` (`hour`, `day` or `month`), and the simulated AI's delay, failure rate and timeout.
+Settings are in [`.env`](.env): `DEFAULT_CREDIT_LIMIT` (default 5), `QUOTA_PERIOD` (`hour`, `day` or `month`), `DEDUPE_WINDOW_SECONDS` (default 10, 0 = off), and the simulated AI's delay, failure rate and timeout.
 
 ## Endpoints
 
@@ -69,7 +69,11 @@ Send an optional `Idempotency-Key` header, e.g. a UUID generated once per reques
 | Used with a different prompt | `409 IDEMPOTENCY_KEY_REUSED` |
 | First attempt failed (refunded) | A real new attempt, because the user never got an answer |
 
-A retry storm of 20 simultaneous copies costs one AI call and one credit. The key check runs in the same atomic transaction as the quota check, backed by a unique index on `(user_id, idempotency_key)` that excludes refunded rows. Without a key, every request is charged.
+A retry storm of 20 simultaneous copies costs one AI call and one credit. The key check runs in the same atomic transaction as the quota check, backed by a unique index on `(user_id, idempotency_key)` that excludes refunded rows.
+
+In a real client the key is not typed by hand. The client code generates it (`crypto.randomUUID()`) once per user action and resends it on retries.
+
+**Without a key**, there is an automatic fallback: the same user sending the **same prompt** within `DEDUPE_WINDOW_SECONDS` (default 10) gets the same replay or 409 behaviour. The trade-off is that a user who deliberately asks the same question twice within the window gets the first answer back. After the window, or with a different prompt, it's a new charged request. An explicit key always takes precedence, and `0` turns the fallback off.
 
 ## What's not implemented
 
