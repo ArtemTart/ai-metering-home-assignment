@@ -23,6 +23,8 @@ Settings are in [`.env`](.env): `DEFAULT_CREDIT_LIMIT` (default 5), `QUOTA_PERIO
 |----------|-------------|
 | `POST /v1/ai/requests` | Header `x-user-id`, body `{"prompt": "..."}`. Returns `200` with the answer, `429` if the limit is reached, `502`/`504` if the AI failed or timed out (credit refunded), or `400` for invalid input. |
 | `GET /v1/users/:userId/usage` | `{ limit, used, remaining, periodStart, periodEnd }` |
+| `GET /v1/users` | All users (anyone with a request or a custom limit) with `limit`, `used`, `refunded`, `remaining` for the current period |
+| `GET /v1/usage-events?userId=` | Raw rows of the evidence table, newest first (max 500); `userId` is optional |
 | `PUT /v1/users/:userId/quota` | Body `{"limit": 10}`. Sets the user's credit limit, effective from their next request. |
 | `DELETE /v1/users/:userId/quota` | Removes the custom limit; the user reverts to `DEFAULT_CREDIT_LIMIT`. |
 

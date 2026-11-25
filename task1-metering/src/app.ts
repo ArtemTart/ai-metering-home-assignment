@@ -115,6 +115,67 @@ export function buildApp({ quota, ai, aiTimeoutMs, logger = false }: AppDeps) {
     );
 
     // Admin operations. Unauthenticated in this demo; in production they would require admin auth.
+    api.get(
+      '/v1/users',
+      {
+        schema: {
+          summary: 'All users with their limit and usage in the current period',
+          response: {
+            200: {
+              type: 'object',
+              properties: {
+                periodStart: { type: 'string' },
+                periodEnd: { type: 'string' },
+                users: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      userId: { type: 'string' },
+                      limit: { type: 'integer' },
+                      customLimit: { type: 'boolean', description: 'true if set via PUT /quota, false if the default' },
+                      used: { type: 'integer' },
+                      refunded: { type: 'integer', description: 'Failed AI calls this period (not charged)' },
+                      remaining: { type: 'integer' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      async () => quota.listUsers(),
+    );
+
+    api.get<{ Querystring: { userId?: string } }>(
+      '/v1/usage-events',
+      {
+        schema: {
+          summary: 'Raw usage records (the evidence table), newest first, max 500',
+          querystring: { type: 'object', properties: { userId } },
+          response: {
+            200: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  user_id: { type: 'string' },
+                  status: { type: 'string', enum: ['RESERVED', 'COMMITTED', 'REFUNDED'] },
+                  period_start: { type: 'string' },
+                  created_at: { type: 'string' },
+                  settled_at: { type: 'string', nullable: true },
+                  error: { type: 'string', nullable: true },
+                },
+              },
+            },
+          },
+        },
+      },
+      async (request) => quota.listEvents(request.query.userId),
+    );
+
     api.put<{ Params: { userId: string }; Body: { limit: number } }>(
       '/v1/users/:userId/quota',
       {

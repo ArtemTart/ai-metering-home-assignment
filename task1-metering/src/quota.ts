@@ -33,6 +33,22 @@ export function createQuota(db: Db, options: { defaultLimit: number; period: Per
      ON CONFLICT (user_id) DO UPDATE SET credit_limit = excluded.credit_limit, updated_at = excluded.updated_at`,
   );
   const deleteUserLimit = db.prepare(`DELETE FROM user_quotas WHERE user_id = ?`);
+  // Every user who has made a request or has a custom limit, with their current-period counts.
+  const allUsers = db.prepare(
+    `WITH users AS (SELECT user_id FROM usage_events UNION SELECT user_id FROM user_quotas)
+     SELECT u.user_id                                  AS userId,
+            q.credit_limit                             AS customLimit,
+            COALESCE(SUM(e.status <> 'REFUNDED'), 0)   AS used,
+            COALESCE(SUM(e.status = 'REFUNDED'), 0)    AS refunded
+       FROM users u
+       LEFT JOIN user_quotas q  ON q.user_id = u.user_id
+       LEFT JOIN usage_events e ON e.user_id = u.user_id AND e.period_start = ?
+      GROUP BY u.user_id
+      ORDER BY u.user_id`,
+  );
+  const recentEvents = db.prepare(
+    `SELECT * FROM usage_events WHERE (@userId IS NULL OR user_id = @userId) ORDER BY created_at DESC LIMIT 500`,
+  );
   // In-flight (RESERVED) credits count too, otherwise parallel requests could overspend.
   const countUsed = db.prepare(
     `SELECT COUNT(*) AS n FROM usage_events WHERE user_id = ? AND period_start = ? AND status <> 'REFUNDED'`,
@@ -75,6 +91,20 @@ export function createQuota(db: Db, options: { defaultLimit: number; period: Per
       upsertUserLimit.run(userId, limit, clock().toISOString());
       return usage(userId);
     },
+    listUsers() {
+      const { start, end } = periodBounds(clock(), options.period);
+      const rows = allUsers.all(start) as { userId: string; customLimit: number | null; used: number; refunded: number }[];
+      return {
+        periodStart: start,
+        periodEnd: end,
+        users: rows.map(({ userId, customLimit, used, refunded }) => {
+          const limit = customLimit ?? options.defaultLimit;
+          return { userId, limit, customLimit: customLimit !== null, used, refunded, remaining: Math.max(0, limit - used) };
+        }),
+      };
+    },
+    /** Raw ledger rows, newest first (max 500). */
+    listEvents: (userId?: string) => recentEvents.all({ userId: userId ?? null }),
     /** Reverts the user to the default limit. */
     resetLimit(userId: string): Usage {
       deleteUserLimit.run(userId);

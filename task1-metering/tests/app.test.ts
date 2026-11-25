@@ -120,9 +120,52 @@ describe('GET /v1/users/:userId/usage', () => {
     const spec = (await t.app.inject({ url: '/docs/json' })).json();
     expect(Object.keys(spec.paths).sort()).toEqual([
       '/v1/ai/requests',
+      '/v1/usage-events',
+      '/v1/users',
       '/v1/users/{userId}/quota',
       '/v1/users/{userId}/usage',
     ]);
+  });
+});
+
+describe('GET /v1/users and /v1/usage-events', () => {
+  it('lists every user with their usage, including refunds and custom limits', async () => {
+    t = setup({ limit: 3 });
+    await t.send('alice');
+    t.ai.mode = 'fail';
+    await t.send('alice');
+    t.ai.mode = 'ok';
+    await t.send('bob');
+    await t.app.inject({ method: 'PUT', url: '/v1/users/carol/quota', payload: { limit: 10 } });
+
+    const res = (await t.app.inject({ url: '/v1/users' })).json();
+    expect(res.periodStart).toBe('2026-03-01T00:00:00.000Z');
+    expect(res.users).toEqual([
+      { userId: 'alice', limit: 3, customLimit: false, used: 1, refunded: 1, remaining: 2 },
+      { userId: 'bob', limit: 3, customLimit: false, used: 1, refunded: 0, remaining: 2 },
+      { userId: 'carol', limit: 10, customLimit: true, used: 0, refunded: 0, remaining: 10 },
+    ]);
+  });
+
+  it('counts only the current period', async () => {
+    t = setup();
+    await t.send('alice');
+    t.setNow('2026-04-02T00:00:00.000Z');
+    const [alice] = (await t.app.inject({ url: '/v1/users' })).json().users;
+    expect(alice).toMatchObject({ userId: 'alice', used: 0, remaining: 3 });
+  });
+
+  it('returns the raw events, optionally filtered by user', async () => {
+    t = setup();
+    await t.send('alice');
+    await t.send('bob');
+
+    const all = (await t.app.inject({ url: '/v1/usage-events' })).json();
+    expect(all).toHaveLength(2);
+    expect(all[0]).toMatchObject({ status: 'COMMITTED', period_start: '2026-03-01T00:00:00.000Z', error: null });
+
+    const bobs = (await t.app.inject({ url: '/v1/usage-events?userId=bob' })).json();
+    expect(bobs.map((e: { user_id: string }) => e.user_id)).toEqual(['bob']);
   });
 });
 
