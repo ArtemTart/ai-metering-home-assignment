@@ -12,7 +12,7 @@ npm test      # 34 tests: store logic, components, server
 npm run typecheck
 ```
 
-The app is at <http://localhost:5173>. The mock server changes a random task every 4 seconds (`SIMULATOR_INTERVAL_MS` to change it).
+The app is at <http://localhost:5173>. Settings are in [`.env`](.env): `PORT`, `SIMULATOR_INTERVAL_MS`, `MAX_ACTIVITY`, `MIN_TASKS` / `MAX_TASKS`, `SSE_HEARTBEAT_MS`.
 
 ## What's on the screen
 

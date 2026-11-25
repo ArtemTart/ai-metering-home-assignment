@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import type { Activity, NewTask, ServerEvent, Task, TaskPatch } from '../shared/types.js';
 
-const MAX_ACTIVITY = 50;
+export interface BoardOptions {
+  /** Cap on the activity feed. From MAX_ACTIVITY in .env. */
+  maxActivity?: number;
+  now?: () => Date;
+}
 
 /**
  * The server-side source of truth: tasks in memory, a capped activity log, and subscribers
  * (one per open SSE connection) that receive every change as it happens.
  */
-export function createBoard(initial: NewTask[] = [], now: () => Date = () => new Date()) {
+export function createBoard(initial: NewTask[] = [], { maxActivity = 50, now = () => new Date() }: BoardOptions = {}) {
   const tasks = new Map<string, Task>();
   const activity: Activity[] = [];
   const subscribers = new Set<(event: ServerEvent) => void>();
@@ -16,7 +20,7 @@ export function createBoard(initial: NewTask[] = [], now: () => Date = () => new
   const log = (actor: Activity['actor'], message: string): Activity => {
     const entry = { id: nextActivityId++, at: now().toISOString(), actor, message };
     activity.unshift(entry);
-    activity.length = Math.min(activity.length, MAX_ACTIVITY);
+    activity.length = Math.min(activity.length, maxActivity);
     return entry;
   };
   const publish = (event: ServerEvent) => subscribers.forEach((send) => send(event));

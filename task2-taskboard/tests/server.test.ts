@@ -108,7 +108,8 @@ describe('simulator', () => {
   // The simulated "other side" keeps changing tasks, and every change is broadcast like a user's.
   it('makes random changes that are broadcast', () => {
     t = setup();
-    for (let i = 0; i < 100; i++) simulateChange(t.board);
+    const opts = { minTasks: 3, maxTasks: 15 };
+    for (let i = 0; i < 100; i++) simulateChange(t.board, opts);
     expect(t.events.length).toBeGreaterThan(50);
     expect(t.events.every((e) => e.type !== 'snapshot' && e.activity.actor === 'server')).toBe(true);
   });
@@ -116,8 +117,9 @@ describe('simulator', () => {
   // It never deletes the board down to nothing.
   it('keeps at least 3 tasks', () => {
     t = setup();
+    const opts = { minTasks: 3, maxTasks: 15 };
     for (let i = 0; i < 500; i++) {
-      simulateChange(t.board);
+      simulateChange(t.board, opts);
       expect(t.board.list().length).toBeGreaterThanOrEqual(3);
     }
   });

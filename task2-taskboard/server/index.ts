@@ -1,24 +1,31 @@
 import { buildServer } from './app.js';
 import { createBoard } from './board.js';
+import { loadConfig } from './config.js';
 import { startSimulator } from './simulator.js';
 
-const PORT = Number(process.env.PORT ?? 3001);
-const SIMULATOR_INTERVAL_MS = Number(process.env.SIMULATOR_INTERVAL_MS ?? 4000);
+const config = loadConfig();
 
-const board = createBoard([
-  { title: 'Set up CI pipeline', assignee: 'Alice', status: 'done', priority: 'high' },
-  { title: 'Design task editor', assignee: 'Bob', status: 'in_progress', priority: 'medium' },
-  { title: 'Write API docs', assignee: 'Carol', status: 'todo', priority: 'low' },
-  { title: 'Fix SSE reconnect', assignee: 'Dan', status: 'in_progress', priority: 'high' },
-  { title: 'Add activity log', assignee: 'Alice', status: 'todo', priority: 'medium' },
-  { title: 'Release v1.0', assignee: 'Bob', status: 'todo', priority: 'high' },
-]);
+const board = createBoard(
+  [
+    { title: 'Set up CI pipeline', assignee: 'Alice', status: 'done', priority: 'high' },
+    { title: 'Design task editor', assignee: 'Bob', status: 'in_progress', priority: 'medium' },
+    { title: 'Write API docs', assignee: 'Carol', status: 'todo', priority: 'low' },
+    { title: 'Fix SSE reconnect', assignee: 'Dan', status: 'in_progress', priority: 'high' },
+    { title: 'Add activity log', assignee: 'Alice', status: 'todo', priority: 'medium' },
+    { title: 'Release v1.0', assignee: 'Bob', status: 'todo', priority: 'high' },
+  ],
+  { maxActivity: config.maxActivity },
+);
 
-const app = buildServer(board);
-const stopSimulator = startSimulator(board, SIMULATOR_INTERVAL_MS);
+const app = buildServer(board, { heartbeatMs: config.sseHeartbeatMs });
+const stopSimulator = startSimulator(board, {
+  intervalMs: config.simulatorIntervalMs,
+  minTasks: config.minTasks,
+  maxTasks: config.maxTasks,
+});
 
-await app.listen({ port: PORT, host: 'localhost' });
-console.log(`Mock server on http://localhost:${PORT} (random change every ${SIMULATOR_INTERVAL_MS} ms)`);
+await app.listen({ port: config.port, host: 'localhost' });
+console.log(`Mock server on http://localhost:${config.port} (random change every ${config.simulatorIntervalMs} ms)`);
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, async () => {

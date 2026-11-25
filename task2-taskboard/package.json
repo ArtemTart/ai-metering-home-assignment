@@ -9,7 +9,7 @@
   },
   "scripts": {
     "prestart": "npm install --no-audit --no-fund --loglevel=error",
-    "start": "concurrently --kill-others --names server,client --prefix-colors blue,green \"tsx server/index.ts\" \"vite --open\"",
+    "start": "concurrently --kill-others --names server,client --prefix-colors blue,green \"tsx --env-file=.env server/index.ts\" \"vite --open\"",
     "pretest": "npm install --no-audit --no-fund --loglevel=error",
     "test": "vitest run",
     "typecheck": "vue-tsc --noEmit"

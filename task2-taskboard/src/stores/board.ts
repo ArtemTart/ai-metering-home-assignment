@@ -4,7 +4,8 @@ import { PRIORITIES, STATUSES, TEAM } from '../../shared/types.js';
 import type { Activity, Assignee, NewTask, ServerEvent, Status, Task, TaskPatch } from '../../shared/types.js';
 import { api, ApiError } from '../api.js';
 
-const MAX_ACTIVITY = 50;
+/** Mirrors the server's MAX_ACTIVITY (.env). The server already caps the feed; this is a client-side safety net. */
+const MAX_ACTIVITY = Number(import.meta.env.VITE_MAX_ACTIVITY ?? 50);
 
 /** High priority first, then alphabetically, so the order is stable while tasks change. */
 const byPriorityThenTitle = (a: Task, b: Task) =>
