@@ -171,32 +171,7 @@ user_quotas (
 | Process crashes between reserve and settle | **Sweeper** (at startup and every 30 s) refunds `RESERVED` rows older than T + 30 s with `RESERVATION_EXPIRED`. Until then the user is blocked early, never over-charged. | Implemented |
 | AI failing repeatedly | Production: a circuit breaker fails fast *before* reserving, so no charge and no load on a dead dependency. | Designed, not built |
 
-### Async model
-
-Node.js runs one thread; `await` frees it while waiting, so thousands of requests can wait on the AI at once. The rule used here: **`await` only where something actually waits.**
-
-| Operation | Sync / async | Why |
-|---|---|---|
-| AI call, retry backoff | `async` | Slow network I/O (seconds). Uses one `AbortSignal.timeout(T)` for the whole call: it cancels the in-flight attempt, the backoff sleep (`timers/promises` with `signal`), and stops further retries. |
-| Database (`better-sqlite3`) | **sync, on purpose** | In-process, microseconds. The reservation (idempotency check → count → insert) has **no `await` inside**, so no other request can interleave; the SQLite write lock covers other processes. Async here would add overhead and weaken that argument. |
-| Shutdown | `async` | `await app.close()` waits for in-flight requests before `db.close()`. |
-
-Details worth knowing:
-- **Cancel, don't just abandon.** A plain `Promise.race` timeout only stops *waiting*; the provider keeps working and billing. The signal is passed to the AI call so it stops. A provider that ignores the signal is still cut off (the race is kept as a fallback).
-- **Retries only within the deadline**, never `T × retries`; jitter (×0.5–1.5) prevents many clients retrying in sync. In production, retry only transient errors (5xx, 429, network), not 4xx.
-- **With PostgreSQL** the driver is async: the reservation becomes `await BEGIN … COMMIT`, and atomicity comes from row locks (`SELECT … FOR UPDATE` / conditional `UPDATE`), not from the absence of `await`.
-- **The sweeper threshold must exceed T** (a live request always settles within T), otherwise it could refund a request that is about to succeed. If that ever happened, the guarded settle (`WHERE status = 'RESERVED'`) makes the late commit a no-op: the user gets the answer for free — the safe direction.
-
-### Simulated AI failures vs. retries
-
-The assignment requires the simulated AI to fail occasionally (`AI_FAILURE_RATE`, default 0.2 = about 1 in 5 calls). Automatic retries work against that visibility: with 2 retries a request only fails if all 3 attempts fail (0.2³ ≈ 0.8%), so failures practically disappear from the API.
-
-| `AI_RETRIES` | What the client sees | When to use |
-|---|---|---|
-| **0** (default) | About 1 in 5 requests → 502 `AI_ERROR`, credit refunded. | Local demo and tests: the required failure behaviour is visible. |
-| 2 | Most failures are absorbed: 200 with `"attempts": 2` or `3`. Only ~0.8% end in 502. | Production: transient provider errors shouldn't reach the user. |
-
-Retries must never make problems invisible to operators: every failed attempt is logged with the `requestId`, the response reports `attempts`, and the 502 message says how many attempts were made. In production, a rising retry rate is an alert signal (provider degrading) even while users still get 200s.
+The async model (what is `await`ed and why the database is deliberately synchronous) and the reasoning behind `AI_RETRIES=0` are explained in the [README](../README.md#async-model).
 
 Observability in production: counters for reservations, commits, refunds by reason, 429 and 409 rates; `requestId` as the log correlation ID.
 
