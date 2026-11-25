@@ -4,6 +4,12 @@ import { AiTimeoutError, withTimeout } from '../services/ai.service.js';
 import type { AiRequestRoute, AiRouteOptions } from '../types/index.js';
 
 export const aiRoutes: FastifyPluginAsync<AiRouteOptions> = async (api, { quota, ai, aiTimeoutMs }) => {
+  /**
+   * POST /v1/ai/requests — sends a prompt to the (simulated) AI on behalf of the user in `x-user-id`.
+   * Reserves one credit first; if the user has none left, returns 429 without calling the AI.
+   * On success the credit is committed (200). If the AI fails (502) or times out (504), the credit is
+   * refunded, but the attempt stays in usage_events as evidence.
+   */
   api.post<AiRequestRoute>('/v1/ai/requests', { schema: aiRequestSchema }, async (request, reply) => {
     const user = request.headers['x-user-id'];
     const reservation = quota.reserve(user);
