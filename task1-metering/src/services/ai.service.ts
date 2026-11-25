@@ -37,7 +37,12 @@ function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
  * provider stops working and billing), and AiTimeoutError is thrown. Failures are retried with exponential
  * backoff and jitter while time remains; the last error is thrown when retries run out.
  */
-export async function callAi(ai: AiCall, prompt: string, { timeoutMs, retries, backoffMs }: AiCallPolicy): Promise<string> {
+export async function callAi(
+  ai: AiCall,
+  prompt: string,
+  { timeoutMs, retries, backoffMs }: AiCallPolicy,
+  onRetry: (failedAttempt: number, error: unknown) => void = () => {},
+): Promise<string> {
   const signal = AbortSignal.timeout(timeoutMs);
   const timedOut = () => new AiTimeoutError(`AI call exceeded ${timeoutMs}ms`);
 
@@ -47,6 +52,7 @@ export async function callAi(ai: AiCall, prompt: string, { timeoutMs, retries, b
     } catch (err) {
       if (signal.aborted) throw timedOut();
       if (attempt >= retries) throw err;
+      onRetry(attempt + 1, err);
     }
     // 2^attempt × base, randomized ×0.5–1.5 so many clients retrying at once don't hit the provider in sync.
     const delay = backoffMs * 2 ** attempt * (0.5 + Math.random());

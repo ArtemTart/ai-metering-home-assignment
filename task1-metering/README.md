@@ -53,7 +53,7 @@ Routes stay thin: they validate input via schemas and delegate to services. Serv
 Each request is one row in `usage_events`:
 
 1. **Reserve.** In a single SQLite transaction, count the user's credits in the current period. If the count is below the limit, insert a `RESERVED` row; otherwise return 429. The transaction takes the write lock before counting, so parallel requests can't both get the last credit.
-2. **Call the AI** (simulated: random delay and occasional failure). Failures are retried up to `AI_RETRIES` times with exponential backoff and jitter. One deadline (`AI_TIMEOUT_MS`) covers all attempts, and on expiry the in-flight call is cancelled with an `AbortSignal`.
+2. **Call the AI** (simulated: random delay and occasional failure). Failures are retried up to `AI_RETRIES` times with exponential backoff and jitter. The default is 0, so the simulated failures are visible as 502s; with retries on, the response's `attempts` field and a log line show each retried failure. One deadline (`AI_TIMEOUT_MS`) covers all attempts, and on expiry the in-flight call is cancelled with an `AbortSignal`.
 3. **Settle.** Mark the row `COMMITTED` on success, or `REFUNDED` on failure or timeout. Refunded rows stay in the table as evidence but don't count against the limit.
 
 Periods are fixed, calendar-aligned UTC windows (e.g. a calendar month).

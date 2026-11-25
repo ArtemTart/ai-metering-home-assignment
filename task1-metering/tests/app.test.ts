@@ -469,6 +469,7 @@ describe('async: AI retries, cancellation and orphaned reservations', () => {
     t.ai.mode = 'flaky';
     const res = await t.send();
     expect(res.statusCode).toBe(200);
+    expect(res.json().attempts).toBe(2);
     expect(t.ai.calls).toBe(2);
     expect(t.events()).toEqual([{ status: 'COMMITTED', error: null }]);
   });
@@ -477,7 +478,9 @@ describe('async: AI retries, cancellation and orphaned reservations', () => {
   it('gives up after the retry limit and refunds', async () => {
     t = setup({ aiRetries: 2 });
     t.ai.mode = 'fail';
-    expect((await t.send()).statusCode).toBe(502);
+    const res = await t.send();
+    expect(res.statusCode).toBe(502);
+    expect(res.json().message).toMatch(/after 3 attempt/);
     expect(t.ai.calls).toBe(3);
     expect(t.events()).toEqual([{ status: 'REFUNDED', error: 'AI_ERROR' }]);
   });

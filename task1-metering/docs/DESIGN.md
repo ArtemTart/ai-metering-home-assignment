@@ -148,7 +148,7 @@ user_quotas (
 | Failure | Behaviour | Status |
 |---------|-----------|--------|
 | AI provider slow | Deadline T for the whole call; on expiry the call is **aborted** (`AbortSignal`), refund, 504. | Implemented |
-| AI provider errors (transient) | Retried up to `AI_RETRIES` times with exponential backoff + jitter, **within the same deadline T**; one reservation, charged once. Still failing → refund, 502. | Implemented |
+| AI provider errors (transient) | Retried up to `AI_RETRIES` times with exponential backoff + jitter, **within the same deadline T**; one reservation, charged once. Still failing → refund, 502. Each retry is logged and the response reports `attempts`, so retries don't hide provider problems. Default 0 locally, so the simulated failures stay visible. | Implemented |
 | Database busy | Lock wait bounded by `busy_timeout` (5 s), then the request fails without charging. | Implemented |
 | Database unavailable | Reservation throws → 500, no AI call (fail closed). | Implemented |
 | Shutdown / deploy (SIGTERM, Ctrl+C) | **Graceful shutdown**: stop accepting requests, wait for in-flight ones to settle, close the DB; forced exit after T + 5 s. | Implemented |

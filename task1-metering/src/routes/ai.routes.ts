@@ -47,20 +47,25 @@ export const aiRoutes: FastifyPluginAsync<AiRouteOptions> = async (api, { quota,
 
     const { eventId } = reservation;
     let result: string;
+    let attempts = 1;
     try {
-      result = await callAi(ai, request.body.prompt, aiPolicy);
+      result = await callAi(ai, request.body.prompt, aiPolicy, (failedAttempt, err) => {
+        attempts++;
+        request.log.warn({ requestId: eventId, failedAttempt, err: String(err) }, 'AI call failed, retrying');
+      });
     } catch (err) {
       const reason = err instanceof AiTimeoutError ? 'AI_TIMEOUT' : 'AI_ERROR';
       quota.refund(eventId, reason);
+      request.log.warn({ requestId: eventId, attempts, reason }, 'AI call failed, credit refunded');
       return reply.code(reason === 'AI_TIMEOUT' ? 504 : 502).send({
         error: reason,
-        message: 'The AI call did not complete; your credit was refunded.',
+        message: `The AI call did not complete after ${attempts} attempt(s); your credit was refunded.`,
         usage: quota.usage(user),
       });
     }
 
     const response = { requestId: eventId, result };
     quota.commit(eventId, response);
-    return { ...response, replayed: false, usage: quota.usage(user) };
+    return { ...response, attempts, replayed: false, usage: quota.usage(user) };
   });
 };

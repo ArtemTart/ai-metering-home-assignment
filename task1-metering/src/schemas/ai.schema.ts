@@ -34,6 +34,10 @@ export const aiRequestSchema = {
       properties: {
         requestId: { type: 'string' },
         result: { type: 'string' },
+        attempts: {
+          type: 'integer',
+          description: 'AI calls made for this request; > 1 means earlier attempts failed and were retried (not set on replays)',
+        },
         replayed: {
           type: 'boolean',
           description: 'true = a repeat of an earlier request: stored answer, AI not called, not charged',
