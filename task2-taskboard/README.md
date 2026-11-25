@@ -117,3 +117,5 @@ tests/
 - **Authentication / real users:** the actor is just "user" or "server"; two open tabs both appear as "user".
 - **Offline editing queue:** edits made while disconnected fail (and roll back) instead of being queued.
 - **Undo, filtering, sorting options, drag-and-drop:** out of scope for the shared-state focus.
+
+Production edge cases, bottlenecks and a go-live plan: [`docs/PRODUCTION.md`](docs/PRODUCTION.md).
