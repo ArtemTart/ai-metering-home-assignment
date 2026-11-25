@@ -28,7 +28,17 @@ npx vitest run --reporter=verbose
 | `tests/connection.test.ts` | Malformed SSE frames are ignored |
 | `tests/config.test.ts` | `.env` validation |
 
-The app is at <http://localhost:5173>. Settings are in [`.env`](.env): `PORT`, `SIMULATOR_INTERVAL_MS`, `MAX_ACTIVITY`, `MIN_TASKS` / `MAX_TASKS`, `SSE_HEARTBEAT_MS`.
+The app is at <http://localhost:5173>. Settings are in [`.env`](.env): `PORT`, `SIMULATOR_INTERVAL_MS`, `MAX_ACTIVITY`, `MIN_TASKS` / `MAX_TASKS`, `SSE_HEARTBEAT_MS`, `VITE_MIN_PENDING_MS`.
+
+## Saving / Adding indicator
+
+While a create, update or delete is in flight:
+
+- the task row shows **Saving…**, dims slightly, and its dropdowns / delete are disabled
+- the Add button shows **Adding…**
+- the editor Save button shows **Saving…**
+
+A second click on the same task is ignored until the first request finishes (per-task in-flight lock). On localhost the API answers in ~1ms, so `VITE_MIN_PENDING_MS` (default **450**) keeps the indicator visible long enough to see. Set it to `0` to turn that minimum off.
 
 ## What's on the screen
 
@@ -87,6 +97,8 @@ The app is at <http://localhost:5173>. Settings are in [`.env`](.env): `PORT`, `
 | A late update for a deleted task | Ignored: deleted IDs are remembered, so the task isn't resurrected. |
 | Connection lost | Header shows "Offline"; `EventSource` reconnects and the snapshot resyncs everything. |
 | Save or delete fails | Optimistic change is rolled back (unless a newer server version arrived) and an error banner is shown. |
+| Rapid double-click on the same task | Second click ignored while **Saving…** is shown; controls disabled until the request finishes. |
+| Dead SSE subscriber / bad SSE JSON | Failing subscriber is dropped; malformed frames are ignored so others keep working. |
 | Empty or whitespace-only title | Blocked in the UI and rejected by the server (400). |
 | Invalid values (unknown person/status, extra fields, wrong types) | Rejected by the server's schema (400). |
 | A change that changes nothing | No new version and no activity entry. |
