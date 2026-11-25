@@ -1,0 +1,119 @@
+import swagger from '@fastify/swagger';
+import swaggerUi from '@fastify/swagger-ui';
+import Fastify from 'fastify';
+import { AiTimeoutError, withTimeout, type AiCall } from './ai.js';
+import type { Quota } from './quota.js';
+
+export interface AppDeps {
+  quota: Quota;
+  ai: AiCall;
+  aiTimeoutMs: number;
+  logger?: boolean;
+}
+
+const userId = { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,64}$' } as const;
+
+const usageSchema = {
+  type: 'object',
+  properties: {
+    userId: { type: 'string' },
+    limit: { type: 'integer' },
+    used: { type: 'integer' },
+    remaining: { type: 'integer' },
+    periodStart: { type: 'string', format: 'date-time' },
+    periodEnd: { type: 'string', format: 'date-time' },
+  },
+} as const;
+
+const errorSchema = {
+  type: 'object',
+  properties: { error: { type: 'string' }, message: { type: 'string' }, usage: usageSchema },
+} as const;
+
+export function buildApp({ quota, ai, aiTimeoutMs, logger = false }: AppDeps) {
+  const app = Fastify({
+    logger,
+    // Fastify's defaults silently drop unknown fields and coerce types; a billing API should reject bad input.
+    ajv: { customOptions: { removeAdditional: false, coerceTypes: false } },
+  });
+
+  app.register(swagger, {
+    openapi: {
+      info: {
+        title: 'AI Usage Metering API',
+        description: 'Every AI request costs one credit. Each user has a limited number of credits per period.',
+        version: '1.0.0',
+      },
+    },
+  });
+  app.register(swaggerUi, { routePrefix: '/docs' });
+
+  // Routes are registered after swagger so it picks them up.
+  app.register(async (api) => {
+    api.post<{ Headers: { 'x-user-id': string }; Body: { prompt: string } }>(
+      '/v1/ai/requests',
+      {
+        schema: {
+          summary: 'Send an AI request for a user (costs 1 credit)',
+          description: 'A failed or timed-out AI call is refunded, but still recorded as evidence.',
+          headers: { type: 'object', required: ['x-user-id'], properties: { 'x-user-id': userId } },
+          body: {
+            type: 'object',
+            required: ['prompt'],
+            additionalProperties: false,
+            properties: { prompt: { type: 'string', minLength: 1, maxLength: 8000 } },
+          },
+          response: {
+            200: {
+              description: 'AI answered; one credit used',
+              type: 'object',
+              properties: { requestId: { type: 'string' }, result: { type: 'string' }, usage: usageSchema },
+            },
+            429: { description: 'Credit limit reached for this period', ...errorSchema },
+            502: { description: 'AI call failed; credit refunded', ...errorSchema },
+            504: { description: 'AI call timed out; credit refunded', ...errorSchema },
+          },
+        },
+      },
+      async (request, reply) => {
+        const user = request.headers['x-user-id'];
+        const reservation = quota.reserve(user);
+        if (!reservation.ok) {
+          return reply.code(429).send({
+            error: 'QUOTA_EXCEEDED',
+            message: `Credit limit reached; resets at ${reservation.usage.periodEnd}`,
+            usage: reservation.usage,
+          });
+        }
+
+        try {
+          const result = await withTimeout(ai(request.body.prompt), aiTimeoutMs);
+          quota.commit(reservation.eventId);
+          return { requestId: reservation.eventId, result, usage: quota.usage(user) };
+        } catch (err) {
+          const timedOut = err instanceof AiTimeoutError;
+          quota.refund(reservation.eventId, timedOut ? 'AI_TIMEOUT' : 'AI_ERROR');
+          return reply.code(timedOut ? 504 : 502).send({
+            error: timedOut ? 'AI_TIMEOUT' : 'AI_ERROR',
+            message: 'The AI call did not complete; your credit was refunded.',
+            usage: quota.usage(user),
+          });
+        }
+      },
+    );
+
+    api.get<{ Params: { userId: string } }>(
+      '/v1/users/:userId/usage',
+      {
+        schema: {
+          summary: "A user's current usage and remaining credits",
+          params: { type: 'object', required: ['userId'], properties: { userId } },
+          response: { 200: usageSchema },
+        },
+      },
+      async (request) => quota.usage(request.params.userId),
+    );
+  });
+
+  return app;
+}
