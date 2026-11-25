@@ -7,12 +7,11 @@ Requires Node.js 20.6+.
 ## From the repo root
 
 ```bash
-npm test              # run all tests (Task 1: 83 + Task 2: 40), then exit
-npm start             # start Task 2 (task board) at http://localhost:5173
-npm run start:task1   # start Task 1 at http://localhost:3000
+npm test    # run all tests (Task 1: 83 + Task 2: 40), then exit
+npm start   # start Task 2 (task board) at http://localhost:5173
 ```
 
-`npm start` and `npm test` are separate: tests print in the terminal and exit; start keeps the app running.
+`npm start` and `npm test` are separate: tests print in the terminal and exit; start keeps the app running. To run Task 1, use the commands in its section below.
 
 ## Task 1 — AI Usage Metering & Quota
 
