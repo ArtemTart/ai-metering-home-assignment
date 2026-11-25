@@ -47,6 +47,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       failureRate: fraction('AI_FAILURE_RATE', 0.2),
     },
     aiTimeoutMs: int('AI_TIMEOUT_MS', 3000, 1),
+    aiRetries: int('AI_RETRIES', 2, 0, 5),
+    aiBackoffMs: int('AI_RETRY_BACKOFF_MS', 100, 0, 10_000),
   };
 
   if (config.ai.minDelayMs > config.ai.maxDelayMs) errors.push('AI_MIN_DELAY_MS must be <= AI_MAX_DELAY_MS');

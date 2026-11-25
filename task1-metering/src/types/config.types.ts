@@ -9,4 +9,6 @@ export interface Config {
   dedupeWindowSeconds: number;
   ai: SimulatedAiOptions;
   aiTimeoutMs: number;
+  aiRetries: number;
+  aiBackoffMs: number;
 }

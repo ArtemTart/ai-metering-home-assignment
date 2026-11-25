@@ -130,7 +130,9 @@ user_quotas (
 | Same key, different prompt | `request_hash` mismatch → 409 `IDEMPOTENCY_KEY_REUSED`. |
 | Retry after a refunded failure | Allowed as a new attempt (the index ignores `REFUNDED` rows). |
 | No key, same prompt repeated within `DEDUPE_WINDOW_SECONDS` (10 s) | Treated as a retry (replay / 409). Trade-off: a deliberate identical question within 10 s returns the first answer. `0` disables it. |
-| AI returns an error / exceeds timeout T | `REFUNDED` with `AI_ERROR` / `AI_TIMEOUT`, 502 / 504. A late answer is discarded. |
+| AI returns an error | Retried with backoff within T; if all attempts fail, `REFUNDED` with `AI_ERROR`, 502. |
+| AI exceeds timeout T | Call aborted, `REFUNDED` with `AI_TIMEOUT`, 504. |
+| Server stopped mid-request / crashed | Graceful shutdown lets the request finish; after a crash the sweeper refunds it (`RESERVATION_EXPIRED`). |
 | Request straddles a period boundary | Belongs to the period of its reservation. |
 | Limit lowered below current usage | Further requests get 429; past usage isn't clawed back. |
 | Limit = 0 | Every request gets 429 (a valid way to suspend a user). |
@@ -145,12 +147,29 @@ user_quotas (
 
 | Failure | Behaviour | Status |
 |---------|-----------|--------|
-| AI provider slow | Timeout T, refund, 504. | Implemented |
-| AI provider errors | Refund, 502. | Implemented |
+| AI provider slow | Deadline T for the whole call; on expiry the call is **aborted** (`AbortSignal`), refund, 504. | Implemented |
+| AI provider errors (transient) | Retried up to `AI_RETRIES` times with exponential backoff + jitter, **within the same deadline T**; one reservation, charged once. Still failing → refund, 502. | Implemented |
 | Database busy | Lock wait bounded by `busy_timeout` (5 s), then the request fails without charging. | Implemented |
 | Database unavailable | Reservation throws → 500, no AI call (fail closed). | Implemented |
-| Process crashes between reserve and settle | The row stays `RESERVED` and keeps counting against the limit (the user is blocked early, never over-charged). Production: a reaper refunds `RESERVED` rows older than T + grace. | Designed, not built |
+| Shutdown / deploy (SIGTERM, Ctrl+C) | **Graceful shutdown**: stop accepting requests, wait for in-flight ones to settle, close the DB; forced exit after T + 5 s. | Implemented |
+| Process crashes between reserve and settle | **Sweeper** (at startup and every 30 s) refunds `RESERVED` rows older than T + 30 s with `RESERVATION_EXPIRED`. Until then the user is blocked early, never over-charged. | Implemented |
 | AI failing repeatedly | Production: a circuit breaker fails fast *before* reserving, so no charge and no load on a dead dependency. | Designed, not built |
+
+### Async model
+
+Node.js runs one thread; `await` frees it while waiting, so thousands of requests can wait on the AI at once. The rule used here: **`await` only where something actually waits.**
+
+| Operation | Sync / async | Why |
+|---|---|---|
+| AI call, retry backoff | `async` | Slow network I/O (seconds). Uses one `AbortSignal.timeout(T)` for the whole call: it cancels the in-flight attempt, the backoff sleep (`timers/promises` with `signal`), and stops further retries. |
+| Database (`better-sqlite3`) | **sync, on purpose** | In-process, microseconds. The reservation (idempotency check → count → insert) has **no `await` inside**, so no other request can interleave; the SQLite write lock covers other processes. Async here would add overhead and weaken that argument. |
+| Shutdown | `async` | `await app.close()` waits for in-flight requests before `db.close()`. |
+
+Details worth knowing:
+- **Cancel, don't just abandon.** A plain `Promise.race` timeout only stops *waiting*; the provider keeps working and billing. The signal is passed to the AI call so it stops. A provider that ignores the signal is still cut off (the race is kept as a fallback).
+- **Retries only within the deadline**, never `T × retries`; jitter (×0.5–1.5) prevents many clients retrying in sync. In production, retry only transient errors (5xx, 429, network), not 4xx.
+- **With PostgreSQL** the driver is async: the reservation becomes `await BEGIN … COMMIT`, and atomicity comes from row locks (`SELECT … FOR UPDATE` / conditional `UPDATE`), not from the absence of `await`.
+- **The sweeper threshold must exceed T** (a live request always settles within T), otherwise it could refund a request that is about to succeed. If that ever happened, the guarded settle (`WHERE status = 'RESERVED'`) makes the late commit a no-op: the user gets the answer for free — the safe direction.
 
 Observability in production: counters for reservations, commits, refunds by reason, 429 and 409 rates; `requestId` as the log correlation ID.
 
@@ -195,5 +214,6 @@ Observability in production: counters for reservations, commits, refunds by reas
 | Usage endpoint; per-user quota API; users overview and raw evidence listing; Swagger UI at `/docs` | Yes |
 | Idempotency keys (replay, in-progress, key reuse, retry after refund) and keyless dedupe window | Yes |
 | Strict input validation and startup config validation (fail closed) | Yes |
-| Automated tests (77): concurrency, limits, refunds, periods, idempotency, validation, config | Yes |
-| Reaper for crashed reservations, circuit breaker, authentication, rate limiting, PostgreSQL | No — designed above |
+| AI retries with backoff + jitter, cancellation on timeout, graceful shutdown, sweeper for crashed reservations | Yes |
+| Automated tests (83): concurrency, limits, refunds, periods, idempotency, validation, config, retries, cancellation, sweeper | Yes |
+| Circuit breaker, authentication, rate limiting, PostgreSQL | No — designed above |

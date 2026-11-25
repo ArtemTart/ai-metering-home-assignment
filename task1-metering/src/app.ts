@@ -6,7 +6,7 @@ import { aiRoutes } from './routes/ai.routes.js';
 import { usageRoutes } from './routes/usage.routes.js';
 import type { AppDeps } from './types/index.js';
 
-export function buildApp({ quota, ai, aiTimeoutMs, logger = false }: AppDeps) {
+export function buildApp({ quota, ai, aiTimeoutMs, aiRetries = 0, aiBackoffMs = 100, logger = false }: AppDeps) {
   const app = Fastify({
     logger,
     // Fastify's defaults silently drop unknown fields and coerce types; a billing API should reject bad input.
@@ -31,7 +31,7 @@ export function buildApp({ quota, ai, aiTimeoutMs, logger = false }: AppDeps) {
   app.register(swaggerUi, { routePrefix: '/docs' });
 
   // Registered after swagger so it picks the routes up.
-  app.register(aiRoutes, { quota, ai, aiTimeoutMs });
+  app.register(aiRoutes, { quota, ai, aiPolicy: { timeoutMs: aiTimeoutMs, retries: aiRetries, backoffMs: aiBackoffMs } });
   app.register(usageRoutes, { quota });
   app.register(adminRoutes, { quota });
 

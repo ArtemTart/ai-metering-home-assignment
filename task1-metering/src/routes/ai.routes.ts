@@ -1,17 +1,17 @@
 import { createHash } from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import { aiRequestSchema } from '../schemas/ai.schema.js';
-import { AiTimeoutError, withTimeout } from '../services/ai.service.js';
+import { AiTimeoutError, callAi } from '../services/ai.service.js';
 import type { AiRequestRoute, AiRouteOptions } from '../types/index.js';
 
 const hashPrompt = (prompt: string) => createHash('sha256').update(prompt).digest('hex');
 
-export const aiRoutes: FastifyPluginAsync<AiRouteOptions> = async (api, { quota, ai, aiTimeoutMs }) => {
+export const aiRoutes: FastifyPluginAsync<AiRouteOptions> = async (api, { quota, ai, aiPolicy }) => {
   /**
    * POST /v1/ai/requests — sends a prompt to the (simulated) AI on behalf of the user in `x-user-id`.
    * Reserves one credit first; if the user has none left, returns 429 without calling the AI.
-   * On success the credit is committed (200). If the AI fails (502) or times out (504), the credit is
-   * refunded, but the attempt stays in usage_events as evidence.
+   * On success the credit is committed (200). Failed AI calls are retried within the timeout; if it still
+   * fails (502) or times out (504), the credit is refunded, but the attempt stays in usage_events as evidence.
    * With an `Idempotency-Key`, a repeat of a finished request returns the stored answer without charging,
    * a repeat of a running one returns 409, and reusing the key for a different prompt returns 409.
    * Without a key, the same prompt from the same user within DEDUPE_WINDOW_SECONDS is treated the same way.
@@ -48,7 +48,7 @@ export const aiRoutes: FastifyPluginAsync<AiRouteOptions> = async (api, { quota,
     const { eventId } = reservation;
     let result: string;
     try {
-      result = await withTimeout(ai(request.body.prompt), aiTimeoutMs);
+      result = await callAi(ai, request.body.prompt, aiPolicy);
     } catch (err) {
       const reason = err instanceof AiTimeoutError ? 'AI_TIMEOUT' : 'AI_ERROR';
       quota.refund(eventId, reason);

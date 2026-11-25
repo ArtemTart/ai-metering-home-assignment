@@ -64,6 +64,10 @@ export function createQuotaService(db: Db, options: QuotaOptions, clock: Clock =
       ORDER BY created_at DESC LIMIT 1`,
   );
   const dedupeWindowMs = (options.dedupeWindowSeconds ?? 0) * 1000;
+  const expireReservations = db.prepare(
+    `UPDATE usage_events SET status = 'REFUNDED', settled_at = ?, error = 'RESERVATION_EXPIRED'
+      WHERE status = 'RESERVED' AND created_at < ?`,
+  );
 
   function usage(userId: string): Usage {
     const { start, end } = periodBounds(clock(), options.period);
@@ -112,6 +116,16 @@ export function createQuotaService(db: Db, options: QuotaOptions, clock: Clock =
     /** Gives the credit back but keeps the row as evidence of the failed attempt. */
     refund(eventId: string, reason: RefundReason): void {
       settleEvent.run('REFUNDED', clock().toISOString(), reason, null, eventId);
+    },
+
+    /**
+     * Refunds reservations older than `olderThanMs` — left behind by a crash or a killed process, since a live
+     * request always settles within the AI timeout. Returns how many were refunded.
+     */
+    refundStale(olderThanMs: number): number {
+      const now = clock();
+      const cutoff = new Date(now.getTime() - olderThanMs).toISOString();
+      return expireReservations.run(now.toISOString(), cutoff).changes;
     },
 
     /** Takes effect on the user's next request. */

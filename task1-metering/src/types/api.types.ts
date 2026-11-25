@@ -1,10 +1,14 @@
 import type { QuotaService } from '../services/quota.service.js';
-import type { AiCall } from './ai.types.js';
+import type { AiCall, AiCallPolicy } from './ai.types.js';
 
 export interface AppDeps {
   quota: QuotaService;
   ai: AiCall;
   aiTimeoutMs: number;
+  /** Retries after a failed AI call, within aiTimeoutMs. Default 0. */
+  aiRetries?: number;
+  /** Base retry backoff. Default 100. */
+  aiBackoffMs?: number;
   logger?: boolean;
 }
 
@@ -15,7 +19,7 @@ export interface QuotaRouteOptions {
 
 export interface AiRouteOptions extends QuotaRouteOptions {
   ai: AiCall;
-  aiTimeoutMs: number;
+  aiPolicy: AiCallPolicy;
 }
 
 // Request shapes, used as Fastify route generics.

@@ -52,7 +52,8 @@ export type ReserveResult =
 
 export type UsageStatus = 'RESERVED' | 'COMMITTED' | 'REFUNDED';
 
-export type RefundReason = 'AI_ERROR' | 'AI_TIMEOUT';
+/** RESERVATION_EXPIRED: the process died before settling (refunded on the next startup / sweep). */
+export type RefundReason = 'AI_ERROR' | 'AI_TIMEOUT' | 'RESERVATION_EXPIRED';
 
 /** A row of usage_events: the evidence for one AI request. */
 export interface UsageEvent {

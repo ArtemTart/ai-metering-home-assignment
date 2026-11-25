@@ -1,24 +1,29 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { openDb } from '../src/db/database.js';
-import { AiTimeoutError, withTimeout } from '../src/services/ai.service.js';
+import { AiTimeoutError, callAi, simulatedAi } from '../src/services/ai.service.js';
 import { createQuotaService } from '../src/services/quota.service.js';
 import { periodBounds } from '../src/utils/period.js';
 
 /** Builds the app with an in-memory DB, a controllable clock and an AI that answers instantly unless told otherwise. */
-function setup({ limit = 3, aiTimeoutMs = 50, dedupeWindowSeconds = 0 } = {}) {
+function setup({ limit = 3, aiTimeoutMs = 50, aiRetries = 0, dedupeWindowSeconds = 0 } = {}) {
   const db = openDb(':memory:');
   let now = new Date('2026-03-15T12:00:00.000Z');
-  const ai = { mode: 'ok' as 'ok' | 'fail' | 'hang', calls: 0 };
+  // 'flaky' fails the first call only; `signal` is the abort signal of the latest call.
+  const ai = { mode: 'ok' as 'ok' | 'fail' | 'hang' | 'flaky', calls: 0, signal: undefined as AbortSignal | undefined };
+  const quota = createQuotaService(db, { defaultLimit: limit, period: 'month', dedupeWindowSeconds }, () => now);
   const app = buildApp({
-    quota: createQuotaService(db, { defaultLimit: limit, period: 'month', dedupeWindowSeconds }, () => now),
-    ai: async (prompt) => {
+    quota,
+    ai: async (prompt, { signal } = {}) => {
       ai.calls++;
-      if (ai.mode === 'fail') throw new Error('boom');
+      ai.signal = signal;
+      if (ai.mode === 'fail' || (ai.mode === 'flaky' && ai.calls === 1)) throw new Error('boom');
       if (ai.mode === 'hang') return new Promise<string>(() => {});
       return `answer: ${prompt}`;
     },
     aiTimeoutMs,
+    aiRetries,
+    aiBackoffMs: 1,
   });
   const send = (user = 'alice', body: object = { prompt: 'hi' }, idempotencyKey?: string) =>
     app.inject({
@@ -29,7 +34,7 @@ function setup({ limit = 3, aiTimeoutMs = 50, dedupeWindowSeconds = 0 } = {}) {
     });
   const usage = async (user = 'alice') => (await app.inject({ url: `/v1/users/${user}/usage` })).json();
   const events = () => db.prepare('SELECT status, error FROM usage_events ORDER BY created_at').all();
-  return { app, db, ai, send, usage, events, setNow: (iso: string) => (now = new Date(iso)) };
+  return { app, db, quota, ai, send, usage, events, setNow: (iso: string) => (now = new Date(iso)) };
 }
 
 let t: ReturnType<typeof setup>;
@@ -453,8 +458,78 @@ describe('helpers', () => {
     expect(periodBounds(new Date('2026-03-15T12:34:00Z'), 'hour').start).toBe('2026-03-15T12:00:00.000Z');
   });
 
-  // withTimeout rejects with AiTimeoutError when the wrapped promise never settles.
-  it('times out a slow promise', async () => {
-    await expect(withTimeout(new Promise(() => {}), 10)).rejects.toBeInstanceOf(AiTimeoutError);
+});
+
+describe('async: AI retries, cancellation and orphaned reservations', () => {
+  const policy = { timeoutMs: 100, retries: 2, backoffMs: 1 };
+
+  // A transient failure is retried inside the same request: the user gets 200 and is charged once.
+  it('retries a failed AI call and charges once', async () => {
+    t = setup({ aiRetries: 2 });
+    t.ai.mode = 'flaky';
+    const res = await t.send();
+    expect(res.statusCode).toBe(200);
+    expect(t.ai.calls).toBe(2);
+    expect(t.events()).toEqual([{ status: 'COMMITTED', error: null }]);
+  });
+
+  // When every attempt fails, retries stop at the limit and the single reservation is refunded.
+  it('gives up after the retry limit and refunds', async () => {
+    t = setup({ aiRetries: 2 });
+    t.ai.mode = 'fail';
+    expect((await t.send()).statusCode).toBe(502);
+    expect(t.ai.calls).toBe(3);
+    expect(t.events()).toEqual([{ status: 'REFUNDED', error: 'AI_ERROR' }]);
+  });
+
+  // On timeout the in-flight call is actually cancelled (its signal is aborted), not just abandoned.
+  it('aborts the in-flight AI call on timeout', async () => {
+    t = setup({ aiTimeoutMs: 20 });
+    t.ai.mode = 'hang';
+    expect((await t.send()).statusCode).toBe(504);
+    expect(t.ai.signal?.aborted).toBe(true);
+  });
+
+  // The deadline covers all attempts: a slow-failing provider can't stretch a request to timeout × retries.
+  it('keeps retries within one deadline', async () => {
+    const slowFail = () => new Promise<string>((_, reject) => setTimeout(() => reject(new Error('boom')), 40));
+    const started = Date.now();
+    await expect(callAi(slowFail, 'hi', { ...policy, retries: 5 })).rejects.toBeInstanceOf(AiTimeoutError);
+    expect(Date.now() - started).toBeLessThan(150);
+  });
+
+  // The simulated AI honours the abort signal: its pending timer is cleared and it rejects immediately.
+  it('stops the simulated AI when aborted', async () => {
+    const ai = simulatedAi({ minDelayMs: 1000, maxDelayMs: 1000, failureRate: 0 });
+    const started = Date.now();
+    await expect(callAi(ai, 'hi', { ...policy, timeoutMs: 20 })).rejects.toBeInstanceOf(AiTimeoutError);
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+
+  // A reservation left by a crashed process is refunded once it's older than the threshold; recent ones are kept.
+  it('refunds stale reservations only', () => {
+    t = setup();
+    const insert = t.db.prepare(
+      `INSERT INTO usage_events (id, user_id, status, period_start, created_at) VALUES (?, 'alice', 'RESERVED', '2026-03-01T00:00:00.000Z', ?)`,
+    );
+    insert.run('old', '2026-03-15T11:00:00.000Z');
+    insert.run('recent', '2026-03-15T11:59:50.000Z');
+
+    expect(t.quota.refundStale(60_000)).toBe(1);
+    expect(t.db.prepare(`SELECT id, status, error FROM usage_events ORDER BY id`).all()).toEqual([
+      { id: 'old', status: 'REFUNDED', error: 'RESERVATION_EXPIRED' },
+      { id: 'recent', status: 'RESERVED', error: null },
+    ]);
+  });
+
+  // Graceful shutdown relies on app.close() waiting for in-flight requests, so their credit is settled, not stuck.
+  it('settles in-flight requests when the app closes', async () => {
+    t = setup({ aiTimeoutMs: 200 });
+    t.ai.mode = 'hang';
+    const inFlight = t.send();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await t.app.close();
+    expect((await inFlight).statusCode).toBe(504);
+    expect(t.events()).toEqual([{ status: 'REFUNDED', error: 'AI_TIMEOUT' }]);
   });
 });

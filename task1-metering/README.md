@@ -15,7 +15,7 @@ npm test
 
 **Swagger UI: <http://localhost:3000/docs>**
 
-Settings are in [`.env`](.env): `DEFAULT_CREDIT_LIMIT` (default 5), `QUOTA_PERIOD` (`hour`, `day` or `month`), `DEDUPE_WINDOW_SECONDS` (default 10, 0 = off), and the simulated AI's delay, failure rate and timeout.
+Settings are in [`.env`](.env): `DEFAULT_CREDIT_LIMIT` (default 5), `QUOTA_PERIOD` (`hour`, `day` or `month`), `DEDUPE_WINDOW_SECONDS` (default 10, 0 = off), the simulated AI's delay and failure rate, `AI_TIMEOUT_MS` (deadline for the whole call), and `AI_RETRIES` / `AI_RETRY_BACKOFF_MS`.
 
 ## Endpoints
 
@@ -53,10 +53,12 @@ Routes stay thin: they validate input via schemas and delegate to services. Serv
 Each request is one row in `usage_events`:
 
 1. **Reserve.** In a single SQLite transaction, count the user's credits in the current period. If the count is below the limit, insert a `RESERVED` row; otherwise return 429. The transaction takes the write lock before counting, so parallel requests can't both get the last credit.
-2. **Call the AI** (simulated: random delay and occasional failure), with a timeout.
+2. **Call the AI** (simulated: random delay and occasional failure). Failures are retried up to `AI_RETRIES` times with exponential backoff and jitter. One deadline (`AI_TIMEOUT_MS`) covers all attempts, and on expiry the in-flight call is cancelled with an `AbortSignal`.
 3. **Settle.** Mark the row `COMMITTED` on success, or `REFUNDED` on failure or timeout. Refunded rows stay in the table as evidence but don't count against the limit.
 
 Periods are fixed, calendar-aligned UTC windows (e.g. a calendar month).
+
+**Shutdown and crashes:** `Ctrl+C` or `SIGTERM` stops accepting requests and waits for in-flight ones to settle before closing the database. If the process crashes instead, a sweeper (at startup and every 30 s) refunds reservations older than the AI timeout + 30 s, with the reason `RESERVATION_EXPIRED`.
 
 ## Retries: `Idempotency-Key`
 
@@ -77,5 +79,5 @@ In a real client the key is not typed by hand. The client code generates it (`cr
 
 ## What's not implemented
 
-- **Recovery after a crash** between reserve and settle: the row would stay `RESERVED` and keep counting against the limit.
+- **Circuit breaker** around the AI provider (see the design document).
 - **Authentication:** the user is taken from the `x-user-id` header, and the quota endpoints are open (in production they would require admin rights).
