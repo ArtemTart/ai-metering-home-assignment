@@ -8,9 +8,24 @@ Requires Node.js 20.6+.
 
 ```bash
 npm start     # installs dependencies, starts the mock server (:3001) and the app (:5173), opens the browser
-npm test      # 34 tests: store logic, components, server
+npm test      # 40 tests: store logic, components, server, config — output is in the terminal
 npm run typecheck
 ```
+
+`npm start` runs the app; `npm test` runs the tests and exits. They are not the same command. From the repo root, `npm test` runs Task 1 and Task 2 together.
+
+To list every test name:
+
+```bash
+npx vitest run --reporter=verbose
+```
+
+| Test file | What it covers |
+|---|---|
+| `tests/store.test.ts` | Shared-state logic: versions, optimistic updates, derived counts/groupings (incl. 500 random events) |
+| `tests/components.test.ts` | One edit or server push updates every panel |
+| `tests/server.test.ts` | REST, SSE stream, simulator |
+| `tests/config.test.ts` | `.env` validation |
 
 The app is at <http://localhost:5173>. Settings are in [`.env`](.env): `PORT`, `SIMULATOR_INTERVAL_MS`, `MAX_ACTIVITY`, `MIN_TASKS` / `MAX_TASKS`, `SSE_HEARTBEAT_MS`.
 

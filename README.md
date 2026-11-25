@@ -7,12 +7,24 @@ Requires Node.js 20.6+.
 ## From the repo root
 
 ```bash
-npm test          # run all tests (Task 1 + Task 2), then exit
-npm start         # start Task 2 (task board) at http://localhost:5173
-npm run start:task1
+npm test            # run all tests (Task 1: 83 + Task 2: 40), then exit
+npm start           # start Task 2 (task board) at http://localhost:5173
+npm run start:task1 # start Task 1 at http://localhost:3000
+npm run start:task2 # same as npm start
 ```
 
-`npm start` and `npm test` are separate on purpose: tests verify the code and exit; start keeps the app running.
+`npm start` and `npm test` are **separate on purpose**:
+- `npm test` verifies the code and prints results in the **terminal**, then exits.
+- `npm start` keeps the app running in the browser.
+
+To see every test name listed:
+
+```bash
+cd task1-metering && npx vitest run --reporter=verbose
+cd task2-taskboard && npx vitest run --reporter=verbose
+```
+
+Use two terminals if you want the app and the tests at the same time.
 
 ## Task 1 — AI Usage Metering & Quota
 
