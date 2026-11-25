@@ -19,11 +19,15 @@ Every AI request costs one credit. Every request must be stored as **evidence** 
 
 ```mermaid
 flowchart LR
-  C[Client] -->|POST /v1/ai/requests| API["API instances<br/>(stateless)"]
+  C[Client] -->|POST /v1/ai/requests| LB["Load balancer<br/>(prod)"]
+  ADM[Admin] -->|quotas, users, evidence| LB
+  LB --> API["API instances<br/>(stateless)"]
   API -->|"reserve / settle<br/>one transaction each"| DB[("SQLite locally<br/>PostgreSQL in prod")]
-  API -->|timeout| AI["AI provider<br/>(simulated)"]
-  ADM[Admin] -->|quotas, users, evidence| API
+  API -->|"deadline T, retries,<br/>abort"| AI["AI provider<br/>(simulated)"]
+  SW["Sweeper<br/>(startup + every 30 s)"] -->|refund orphaned RESERVED| DB
 ```
+
+**Components:** the **API** validates input, reserves and settles credits, and calls the AI. It holds no quota state, so any instance can serve any request. The **database** is the single source of truth for limits, usage and evidence. The **AI client** enforces one deadline with retries and cancellation. The **sweeper** refunds reservations left behind by a crashed process.
 
 ```mermaid
 sequenceDiagram
@@ -72,7 +76,7 @@ usage_events (
   period_start    TEXT NOT NULL,      -- the period this credit belongs to (UTC)
   created_at      TEXT NOT NULL,      -- server clock
   settled_at      TEXT,
-  error           TEXT,               -- AI_ERROR | AI_TIMEOUT
+  error           TEXT,               -- AI_ERROR | AI_TIMEOUT | RESERVATION_EXPIRED
   idempotency_key TEXT,               -- client-supplied, optional
   request_hash    TEXT,               -- SHA-256 of the prompt
   response        TEXT                -- stored answer, for idempotent replay
@@ -91,10 +95,13 @@ user_quotas (
 
 **Why each field exists**
 - `id`: a stable reference the customer can quote in a dispute.
-- `status`, `settled_at`, `error`: prove why a credit was or wasn't billed.
+- `status`, `settled_at`, `error`: prove why a credit was or wasn't billed. Refunded rows are kept, so failed attempts are on record too.
+- `created_at`, `settled_at`: when it happened and how long it took; also used by the sweeper and the dedupe window.
 - `period_start`: written at reservation time, so a request that settles after a period boundary still belongs to exactly one period.
 - `request_hash` instead of the prompt: proves *which* request was made without storing user content. Storing prompts would be a separate, retention-governed decision.
+- `idempotency_key` + `response`: let a retry get the original answer back without a second AI call or charge.
 - The **partial unique index** makes "one live request per key" a database guarantee, while still allowing a retry with the same key after a refunded failure. The refunded row stays as evidence.
+- `user_quotas` is separate from the evidence: limits change, evidence doesn't. Only users with a custom limit have a row; everyone else gets the default, so no user registration is needed.
 
 ---
 
@@ -140,6 +147,15 @@ user_quotas (
 | Invalid user ID, empty/oversized prompt, unknown or wrongly typed fields | 400 **before** any reservation, so no charge. Validation is strict: no type coercion, no silent field stripping. |
 | Invalid config (`DEFAULT_CREDIT_LIMIT=abc`, min delay > max delay) | Server refuses to start and lists every error. |
 | Time zones, DST | All periods are UTC. |
+| First request from an unknown user | No registration needed: gets `DEFAULT_CREDIT_LIMIT`. (In production the user comes from authentication, so IDs can't be invented.) |
+| Limit raised mid-period | Takes effect on the next request. |
+| Client disconnects while waiting for the AI | The request continues and settles normally: the cost was incurred. With an `Idempotency-Key` the client can fetch the answer by retrying. |
+| AI answers after the timeout | The call was aborted; a late answer is discarded. The credit is already refunded. |
+| Retry storm without a key | The dedupe window merges identical prompts: 20 parallel copies → 1 AI call, 1 credit. |
+| Request body over 1 MB / prompt over 8,000 characters | 413 / 400 before any reservation. |
+| `QUOTA_PERIOD` changed mid-period (e.g. month → day) | **Known limitation:** usage is counted per `period_start`, so the new period starts at zero for everyone. Change it only at a period boundary; production would version quota plans. |
+| Clock differences between instances | Locally one process, one clock. With many instances, the period must come from one clock (PostgreSQL `now()`), not each server. |
+| Evidence table grows large | Admin listing returns the newest 500 rows; production needs pagination and monthly partitions. |
 
 ---
 
@@ -189,7 +205,8 @@ Observability in production: counters for reservations, commits, refunds by reas
 ## 6. Scaling
 
 - **API instances are stateless**; correctness lives in the database transaction, so horizontal scaling needs no coordination.
-- **SQLite** serializes all writers on one file. That is ideal for a local, one-command assignment and correct across processes, but caps throughput at one machine.
+- **SQLite** serializes all writers on one file. That is ideal for a local, one-command assignment and correct across processes on the same machine, but it can't be shared by servers on different machines. **Many server instances therefore require PostgreSQL** (step 1 below); the API code and the reservation logic stay the same.
+- **Many users:** each request costs one indexed count and one insert. Users only contend with each other because of SQLite's single write lock; with per-user locking in PostgreSQL, one user's traffic never slows another's. A single very hot user is serialized on their own lock, which is the correct behaviour for a strict quota.
 - **Production growth path**, in order of need:
   1. **PostgreSQL**, same schema. Replace the global write lock with a per-user lock (`SELECT ... FOR UPDATE` on the user's row, or a per-user counter row updated with `UPDATE ... WHERE used < limit`), so users don't block each other.
   2. **Counter table** `(user_id, period_start, used)` updated in the same transaction as the insert, replacing `COUNT(*)` once users have many events per period.
@@ -213,6 +230,8 @@ Observability in production: counters for reservations, commits, refunds by reas
 | Fail closed | Fail open | Fail open means unbilled, unaudited usage. |
 | Hash of the prompt | Store the prompt | Privacy and storage cost; the hash still proves which request was made. |
 | Idempotency key + 10 s dedupe fallback | Key only | Protects clients that don't send keys, at the cost of merging deliberate identical questions within 10 s (configurable, can be disabled). |
+| Synchronous DB driver (`better-sqlite3`) | Async driver | No `await` inside the reservation means nothing can interleave; queries take microseconds. Revisited with PostgreSQL. |
+| Retries off by default (`AI_RETRIES=0`) | Retries always on | Keeps the required simulated failures visible; production turns them on and alerts on the retry rate. |
 | SQLite | PostgreSQL locally | The assignment requires local storage and a one-command start; the SQL and transaction semantics carry over. |
 
 ---
