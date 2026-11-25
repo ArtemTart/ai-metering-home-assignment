@@ -167,6 +167,7 @@ Observability in production: counters for reservations, commits, refunds by reas
   4. **Read replicas** for `GET /usage` and admin views; enforcement always uses the primary.
   5. **Shard by `hash(user_id)`**: all of a user's data on one shard, so enforcement never crosses shards.
 - **Abuse protection** belongs in front of the quota: authentication (user from the token, not a header), a per-user rate limit and a concurrency cap, and pagination on the admin listings.
+- The full production plan (load balancer, WAF, caching, real-time streaming, observability) is in [`PRODUCTION.md`](PRODUCTION.md).
 
 ---
 

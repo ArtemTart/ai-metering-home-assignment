@@ -2,7 +2,7 @@
 
 Node.js + TypeScript (Fastify, SQLite). Every AI request costs one credit, each user has a limited number of credits per period, and every request is stored as evidence.
 
-Design document: [`docs/DESIGN.md`](docs/DESIGN.md).
+Design document: [`docs/DESIGN.md`](docs/DESIGN.md). Production plan: [`docs/PRODUCTION.md`](docs/PRODUCTION.md).
 
 ## Run
 
