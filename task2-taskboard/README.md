@@ -6,13 +6,20 @@ Vue 3 (Composition API) + Pinia + TypeScript, with a Node.js mock server (Fastif
 
 Requires Node.js 20.6+.
 
+One command to run (installs dependencies, starts the mock server and the app, opens the browser):
+
 ```bash
-npm start     # installs dependencies, starts the mock server (:3001) and the app (:5173), opens the browser
+npm start
+```
+
+App: <http://localhost:5173> · mock server: <http://localhost:3001>
+
+```bash
 npm test      # store logic, components, server, config — output is in the terminal
 npm run typecheck
 ```
 
-`npm start` runs the app; `npm test` runs the tests and exits. They are not the same command.
+`npm start` and `npm test` are separate commands.
 
 To list every test name:
 
@@ -28,7 +35,7 @@ npx vitest run --reporter=verbose
 | `tests/connection.test.ts` | Malformed SSE frames are ignored |
 | `tests/config.test.ts` | `.env` validation |
 
-The app is at <http://localhost:5173>. Settings are in [`.env`](.env): `PORT`, `SIMULATOR_INTERVAL_MS`, `MAX_ACTIVITY`, `MIN_TASKS` / `MAX_TASKS`, `SSE_HEARTBEAT_MS`, `VITE_MIN_PENDING_MS`.
+Settings are in [`.env`](.env): `PORT` (mock server; Vite proxies `/api` there), `SIMULATOR_INTERVAL_MS`, `MAX_ACTIVITY`, `MIN_TASKS` / `MAX_TASKS`, `SSE_HEARTBEAT_MS`, `VITE_MIN_PENDING_MS`.
 
 ## Saving / Adding indicator
 
