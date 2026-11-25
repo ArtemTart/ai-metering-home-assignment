@@ -171,6 +171,17 @@ Details worth knowing:
 - **With PostgreSQL** the driver is async: the reservation becomes `await BEGIN … COMMIT`, and atomicity comes from row locks (`SELECT … FOR UPDATE` / conditional `UPDATE`), not from the absence of `await`.
 - **The sweeper threshold must exceed T** (a live request always settles within T), otherwise it could refund a request that is about to succeed. If that ever happened, the guarded settle (`WHERE status = 'RESERVED'`) makes the late commit a no-op: the user gets the answer for free — the safe direction.
 
+### Simulated AI failures vs. retries
+
+The assignment requires the simulated AI to fail occasionally (`AI_FAILURE_RATE`, default 0.2 = about 1 in 5 calls). Automatic retries work against that visibility: with 2 retries a request only fails if all 3 attempts fail (0.2³ ≈ 0.8%), so failures practically disappear from the API.
+
+| `AI_RETRIES` | What the client sees | When to use |
+|---|---|---|
+| **0** (default) | About 1 in 5 requests → 502 `AI_ERROR`, credit refunded. | Local demo and tests: the required failure behaviour is visible. |
+| 2 | Most failures are absorbed: 200 with `"attempts": 2` or `3`. Only ~0.8% end in 502. | Production: transient provider errors shouldn't reach the user. |
+
+Retries must never make problems invisible to operators: every failed attempt is logged with the `requestId`, the response reports `attempts`, and the 502 message says how many attempts were made. In production, a rising retry rate is an alert signal (provider degrading) even while users still get 200s.
+
 Observability in production: counters for reservations, commits, refunds by reason, 429 and 409 rates; `requestId` as the log correlation ID.
 
 ---
