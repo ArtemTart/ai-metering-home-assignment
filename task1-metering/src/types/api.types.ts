@@ -25,7 +25,7 @@ export interface UserParams {
 }
 
 export interface AiRequestRoute {
-  Headers: { 'x-user-id': string };
+  Headers: { 'x-user-id': string; 'idempotency-key'?: string };
   Body: { prompt: string };
 }
 

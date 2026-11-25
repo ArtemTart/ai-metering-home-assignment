@@ -4,9 +4,12 @@ import type {
   Clock,
   QuotaOptions,
   RefundReason,
+  ReserveInput,
   ReserveResult,
+  StoredResponse,
   Usage,
   UsageEvent,
+  UsageStatus,
   UsersOverview,
 } from '../types/index.js';
 import { periodBounds } from '../utils/period.js';
@@ -43,10 +46,16 @@ export function createQuotaService(db: Db, options: QuotaOptions, clock: Clock =
     `SELECT COUNT(*) AS n FROM usage_events WHERE user_id = ? AND period_start = ? AND status <> 'REFUNDED'`,
   );
   const insertEvent = db.prepare(
-    `INSERT INTO usage_events (id, user_id, status, period_start, created_at) VALUES (?, ?, 'RESERVED', ?, ?)`,
+    `INSERT INTO usage_events (id, user_id, status, period_start, created_at, idempotency_key, request_hash)
+     VALUES (?, ?, 'RESERVED', ?, ?, ?, ?)`,
   );
   const settleEvent = db.prepare(
-    `UPDATE usage_events SET status = ?, settled_at = ?, error = ? WHERE id = ? AND status = 'RESERVED'`,
+    `UPDATE usage_events SET status = ?, settled_at = ?, error = ?, response = ? WHERE id = ? AND status = 'RESERVED'`,
+  );
+  // A refunded attempt doesn't count: the user never got an answer, so the key may be retried.
+  const findByKey = db.prepare(
+    `SELECT status, request_hash, response FROM usage_events
+      WHERE user_id = ? AND idempotency_key = ? AND status <> 'REFUNDED'`,
   );
 
   function usage(userId: string): Usage {
@@ -60,27 +69,40 @@ export function createQuotaService(db: Db, options: QuotaOptions, clock: Clock =
 
   // IMMEDIATE takes SQLite's write lock before the count, so check-and-insert is atomic
   // even across processes sharing the database file.
-  const reserveTx = db.transaction((userId: string): ReserveResult => {
+  const reserveTx = db.transaction(({ userId, idempotencyKey, requestHash }: ReserveInput): ReserveResult => {
+    if (idempotencyKey) {
+      const previous = findByKey.get(userId, idempotencyKey) as
+        | { status: UsageStatus; request_hash: string; response: string | null }
+        | undefined;
+      if (previous) {
+        if (previous.request_hash !== requestHash) return { kind: 'key_reused' };
+        if (previous.status === 'RESERVED') return { kind: 'in_progress' };
+        return { kind: 'replay', response: JSON.parse(previous.response!) as StoredResponse };
+      }
+    }
+
     const current = usage(userId);
-    if (!(current.remaining > 0)) return { ok: false, usage: current };
+    // Allow only on a positive remaining count, so a corrupt limit (e.g. NaN) blocks rather than grants.
+    if (!(current.remaining > 0)) return { kind: 'quota_exceeded', usage: current };
     const eventId = randomUUID();
-    insertEvent.run(eventId, userId, current.periodStart, clock().toISOString());
-    return { ok: true, eventId };
+    insertEvent.run(eventId, userId, current.periodStart, clock().toISOString(), idempotencyKey ?? null, requestHash);
+    return { kind: 'reserved', eventId };
   });
 
   return {
     usage,
 
-    /** Atomically checks the limit and reserves one credit. */
-    reserve: (userId: string): ReserveResult => reserveTx.immediate(userId),
+    /** Atomically checks the idempotency key and the limit, and reserves one credit. */
+    reserve: (input: ReserveInput): ReserveResult => reserveTx.immediate(input),
 
-    commit(eventId: string): void {
-      settleEvent.run('COMMITTED', clock().toISOString(), null, eventId);
+    /** Stores the response so a repeat of the same idempotency key can be replayed. */
+    commit(eventId: string, response: StoredResponse): void {
+      settleEvent.run('COMMITTED', clock().toISOString(), null, JSON.stringify(response), eventId);
     },
 
     /** Gives the credit back but keeps the row as evidence of the failed attempt. */
     refund(eventId: string, reason: RefundReason): void {
-      settleEvent.run('REFUNDED', clock().toISOString(), reason, eventId);
+      settleEvent.run('REFUNDED', clock().toISOString(), reason, null, eventId);
     },
 
     /** Takes effect on the user's next request. */

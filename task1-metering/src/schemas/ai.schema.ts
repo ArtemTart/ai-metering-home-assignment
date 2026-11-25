@@ -3,8 +3,24 @@ import { errorSchema, usageSchema, userIdSchema } from './common.schema.js';
 export const aiRequestSchema = {
   tags: ['AI'],
   summary: 'Send an AI request for a user (costs 1 credit)',
-  description: 'A failed or timed-out AI call is refunded, but still recorded as evidence.',
-  headers: { type: 'object', required: ['x-user-id'], properties: { 'x-user-id': userIdSchema } },
+  description: [
+    'A failed or timed-out AI call is refunded, but still recorded as evidence.',
+    '',
+    'Send an `Idempotency-Key` (e.g. a UUID, generated once per request and reused on retries) so retries are not',
+    'charged twice: a finished request is replayed with header `idempotent-replayed: true`, a running one returns 409.',
+  ].join('\n'),
+  headers: {
+    type: 'object',
+    required: ['x-user-id'],
+    properties: {
+      'x-user-id': userIdSchema,
+      'idempotency-key': {
+        type: 'string',
+        pattern: '^[A-Za-z0-9_-]{1,128}$',
+        description: 'Optional. Same key = same request; letters, digits, _ and - (max 128)',
+      },
+    },
+  },
   body: {
     type: 'object',
     required: ['prompt'],
@@ -17,6 +33,7 @@ export const aiRequestSchema = {
       type: 'object',
       properties: { requestId: { type: 'string' }, result: { type: 'string' }, usage: usageSchema },
     },
+    409: { description: 'Idempotency-Key is still in progress, or was used with a different prompt', ...errorSchema },
     429: { description: 'Credit limit reached for this period', ...errorSchema },
     502: { description: 'AI call failed; credit refunded', ...errorSchema },
     504: { description: 'AI call timed out; credit refunded', ...errorSchema },

@@ -45,6 +45,7 @@ export const listUsageEventsSchema = {
           created_at: { type: 'string' },
           settled_at: { type: 'string', nullable: true },
           error: { type: 'string', nullable: true },
+          idempotency_key: { type: 'string', nullable: true },
         },
       },
     },

@@ -58,8 +58,20 @@ Each request is one row in `usage_events`:
 
 Periods are fixed, calendar-aligned UTC windows (e.g. a calendar month).
 
+## Retries: `Idempotency-Key`
+
+Send an optional `Idempotency-Key` header, e.g. a UUID generated once per request and **reused on every retry**:
+
+| Repeat of the key | Response |
+|---|---|
+| First request finished | The stored answer, `200` with `idempotent-replayed: true`. Not charged, AI not called. |
+| First request still running | `409 REQUEST_IN_PROGRESS` |
+| Used with a different prompt | `409 IDEMPOTENCY_KEY_REUSED` |
+| First attempt failed (refunded) | A real new attempt, because the user never got an answer |
+
+A retry storm of 20 simultaneous copies costs one AI call and one credit. The key check runs in the same atomic transaction as the quota check, backed by a unique index on `(user_id, idempotency_key)` that excludes refunded rows. Without a key, every request is charged.
+
 ## What's not implemented
 
-- **Idempotency keys:** a retried request is charged again. This is described in the design.
 - **Recovery after a crash** between reserve and settle: the row would stay `RESERVED` and keep counting against the limit.
 - **Authentication:** the user is taken from the `x-user-id` header, and the quota endpoints are open (in production they would require admin rights).

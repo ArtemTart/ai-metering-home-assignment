@@ -60,6 +60,6 @@ describe('quota service safety net', () => {
     const quota = createQuotaService(db, { defaultLimit: 5, period: 'month' });
     db.prepare(`INSERT INTO user_quotas (user_id, credit_limit, updated_at) VALUES ('mallory', 'abc', 'now')`).run();
 
-    expect(quota.reserve('mallory').ok).toBe(false);
+    expect(quota.reserve({ userId: 'mallory', requestHash: 'h' }).kind).toBe('quota_exceeded');
   });
 });

@@ -24,7 +24,29 @@ export interface Usage {
   periodEnd: string;
 }
 
-export type ReserveResult = { ok: true; eventId: string } | { ok: false; usage: Usage };
+/** The stored part of a successful response, replayed for a repeated idempotency key. */
+export interface StoredResponse {
+  requestId: string;
+  result: string;
+}
+
+export interface ReserveInput {
+  userId: string;
+  /** Client-supplied; repeats of the same key are not charged again. */
+  idempotencyKey?: string;
+  /** Hash of the prompt, to detect a key reused for a different request. */
+  requestHash: string;
+}
+
+export type ReserveResult =
+  | { kind: 'reserved'; eventId: string }
+  | { kind: 'quota_exceeded'; usage: Usage }
+  /** Same key, already answered: return the stored response. */
+  | { kind: 'replay'; response: StoredResponse }
+  /** Same key, first request still running. */
+  | { kind: 'in_progress' }
+  /** Same key, different prompt. */
+  | { kind: 'key_reused' };
 
 export type UsageStatus = 'RESERVED' | 'COMMITTED' | 'REFUNDED';
 
@@ -39,6 +61,7 @@ export interface UsageEvent {
   created_at: string;
   settled_at: string | null;
   error: RefundReason | null;
+  idempotency_key: string | null;
 }
 
 export interface UserUsageSummary {

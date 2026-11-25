@@ -20,8 +20,13 @@ function setup({ limit = 3, aiTimeoutMs = 50 } = {}) {
     },
     aiTimeoutMs,
   });
-  const send = (user = 'alice', body: object = { prompt: 'hi' }) =>
-    app.inject({ method: 'POST', url: '/v1/ai/requests', headers: { 'x-user-id': user }, payload: body });
+  const send = (user = 'alice', body: object = { prompt: 'hi' }, idempotencyKey?: string) =>
+    app.inject({
+      method: 'POST',
+      url: '/v1/ai/requests',
+      headers: { 'x-user-id': user, ...(idempotencyKey && { 'idempotency-key': idempotencyKey }) },
+      payload: body,
+    });
   const usage = async (user = 'alice') => (await app.inject({ url: `/v1/users/${user}/usage` })).json();
   const events = () => db.prepare('SELECT status, error FROM usage_events ORDER BY created_at').all();
   return { app, db, ai, send, usage, events, setNow: (iso: string) => (now = new Date(iso)) };
@@ -113,6 +118,97 @@ describe('POST /v1/ai/requests', () => {
     const res = await t.app.inject({ method: 'POST', url: '/v1/ai/requests', headers, payload: body });
     expect(res.statusCode).toBe(400);
     expect(t.events()).toEqual([]);
+  });
+});
+
+describe('Idempotency-Key', () => {
+  const hi = { prompt: 'hi' };
+
+  // A retry with the same key returns the stored answer: same requestId and result, marked as a replay,
+  // without calling the AI or charging a second credit.
+  it('replays a finished request instead of charging again', async () => {
+    t = setup();
+    const first = await t.send('alice', hi, 'key-1');
+    const retry = await t.send('alice', hi, 'key-1');
+
+    expect(retry.statusCode).toBe(200);
+    expect(retry.headers['idempotent-replayed']).toBe('true');
+    expect(retry.json()).toMatchObject({ requestId: first.json().requestId, result: first.json().result });
+    expect(t.ai.calls).toBe(1);
+    expect((await t.usage()).used).toBe(1);
+  });
+
+  // Retry storm: 20 simultaneous copies of one request. Exactly one reaches the AI and is charged;
+  // the rest get either 409 (first still running) or the replayed answer.
+  it('charges a retry storm only once', async () => {
+    t = setup({ limit: 50 });
+    const responses = await Promise.all(Array.from({ length: 20 }, () => t.send('alice', hi, 'storm')));
+
+    for (const res of responses) expect([200, 409]).toContain(res.statusCode);
+    expect(t.ai.calls).toBe(1);
+    expect((await t.usage()).used).toBe(1);
+  });
+
+  // A retry that arrives while the first request is still waiting for the AI gets 409, not a second AI call.
+  it('returns 409 while the first request is still running', async () => {
+    t = setup({ aiTimeoutMs: 200 });
+    t.ai.mode = 'hang';
+    const first = t.send('alice', hi, 'key-1');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const retry = await t.send('alice', hi, 'key-1');
+    expect(retry.statusCode).toBe(409);
+    expect(retry.json().error).toBe('REQUEST_IN_PROGRESS');
+    expect(t.ai.calls).toBe(1);
+    await first;
+  });
+
+  // Reusing a key for a different prompt is a client bug; returning the old answer would be wrong, so it's 409.
+  it('rejects the same key with a different prompt', async () => {
+    t = setup();
+    await t.send('alice', { prompt: 'first question' }, 'key-1');
+    const res = await t.send('alice', { prompt: 'another question' }, 'key-1');
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toBe('IDEMPOTENCY_KEY_REUSED');
+  });
+
+  // If the first attempt failed (refunded), the user never got an answer, so retrying the same key is a real new attempt.
+  it('allows a retry with the same key after a failure', async () => {
+    t = setup();
+    t.ai.mode = 'fail';
+    expect((await t.send('alice', hi, 'key-1')).statusCode).toBe(502);
+
+    t.ai.mode = 'ok';
+    const retry = await t.send('alice', hi, 'key-1');
+    expect(retry.statusCode).toBe(200);
+    expect(retry.headers['idempotent-replayed']).toBeUndefined();
+    expect(t.events()).toEqual([
+      { status: 'REFUNDED', error: 'AI_ERROR' },
+      { status: 'COMMITTED', error: null },
+    ]);
+  });
+
+  // Keys belong to a user: bob using the same key string as alice is an unrelated request.
+  it('scopes keys per user', async () => {
+    t = setup();
+    await t.send('alice', hi, 'shared');
+    const bob = await t.send('bob', hi, 'shared');
+    expect(bob.headers['idempotent-replayed']).toBeUndefined();
+    expect(t.ai.calls).toBe(2);
+  });
+
+  // Without a key nothing changes: every request is new and charged.
+  it('charges every request when no key is sent', async () => {
+    t = setup();
+    await t.send('alice', hi);
+    await t.send('alice', hi);
+    expect((await t.usage()).used).toBe(2);
+  });
+
+  // Keys are limited to letters, digits, _ and - (max 128), so they're safe to store and log.
+  it.each([['has spaces'], ['a'.repeat(129)], ['ключ']])('rejects an invalid key (%s)', async (key) => {
+    t = setup();
+    expect((await t.send('alice', hi, key)).statusCode).toBe(400);
   });
 });
 
