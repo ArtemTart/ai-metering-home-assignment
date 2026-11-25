@@ -6,6 +6,11 @@ import { api, ApiError } from '../api.js';
 
 /** Mirrors the server's MAX_ACTIVITY (.env). The server already caps the feed; this is a client-side safety net. */
 const MAX_ACTIVITY = Number(import.meta.env.VITE_MAX_ACTIVITY ?? 50);
+/** Keep "Saving…" visible at least this long — localhost replies in ~1ms, which is too fast to see otherwise. Off in tests. */
+const MIN_PENDING_MS =
+  import.meta.env.MODE === 'test' ? 0 : Number(import.meta.env.VITE_MIN_PENDING_MS ?? 450);
+
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** High priority first, then alphabetically, so the order is stable while tasks change. */
 const byPriorityThenTitle = (a: Task, b: Task) =>
@@ -39,6 +44,21 @@ export const useBoardStore = defineStore('board', () => {
       const next = { ...pending.value };
       delete next[id];
       pending.value = next;
+    }
+  };
+
+  /** Runs work under a pending flag, holding the flag long enough for the UI to paint "Saving…". */
+  async function withPending<T>(id: string | null, work: () => Promise<T>): Promise<T> {
+    const started = Date.now();
+    if (id) setPending(id, true);
+    else creating.value = true;
+    try {
+      return await work();
+    } finally {
+      const remaining = MIN_PENDING_MS - (Date.now() - started);
+      if (remaining > 0) await wait(remaining);
+      if (id) setPending(id, false);
+      else creating.value = false;
     }
   };
 
@@ -118,55 +138,52 @@ export const useBoardStore = defineStore('board', () => {
   async function updateTask(id: string, patch: TaskPatch): Promise<void> {
     const previous = tasks.value[id];
     if (!previous || pending.value[id]) return; // already saving this task — ignore the second click
-    setPending(id, true);
     tasks.value[id] = { ...previous, ...patch };
-    try {
-      receive(await api.updateTask(id, patch));
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
-        forget(id);
-        lastError.value = 'That task was deleted by someone else.';
-        return;
+    await withPending(id, async () => {
+      try {
+        receive(await api.updateTask(id, patch));
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) {
+          forget(id);
+          lastError.value = 'That task was deleted by someone else.';
+          return;
+        }
+        if (tasks.value[id]?.version === previous.version) tasks.value[id] = previous;
+        lastError.value = `Could not save the change: ${(err as Error).message}`;
       }
-      if (tasks.value[id]?.version === previous.version) tasks.value[id] = previous;
-      lastError.value = `Could not save the change: ${(err as Error).message}`;
-    } finally {
-      setPending(id, false);
-    }
+    });
   }
 
   /** Not optimistic: the task needs its server-assigned ID before it can be shown and edited. */
   async function createTask(input: NewTask): Promise<Task | undefined> {
     if (creating.value) return undefined;
-    creating.value = true;
-    try {
-      const task = await api.createTask(input);
-      receive(task);
-      return task;
-    } catch (err) {
-      lastError.value = `Could not create the task: ${(err as Error).message}`;
-      return undefined;
-    } finally {
-      creating.value = false;
-    }
+    return withPending(null, async () => {
+      try {
+        const task = await api.createTask(input);
+        receive(task);
+        return task;
+      } catch (err) {
+        lastError.value = `Could not create the task: ${(err as Error).message}`;
+        return undefined;
+      }
+    });
   }
 
   /** Optimistic delete; restored if the server refuses (a 404 means it's already gone, which is fine). */
   async function deleteTask(id: string): Promise<void> {
     const previous = tasks.value[id];
     if (!previous || pending.value[id]) return;
-    setPending(id, true);
     forget(id);
-    try {
-      await api.deleteTask(id);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404) return;
-      deletedIds.delete(id);
-      tasks.value[id] = previous;
-      lastError.value = `Could not delete the task: ${(err as Error).message}`;
-    } finally {
-      setPending(id, false);
-    }
+    await withPending(id, async () => {
+      try {
+        await api.deleteTask(id);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return;
+        deletedIds.delete(id);
+        tasks.value[id] = previous;
+        lastError.value = `Could not delete the task: ${(err as Error).message}`;
+      }
+    });
   }
 
   return {

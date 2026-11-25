@@ -145,6 +145,8 @@ describe('user actions', () => {
     const spy = vi.spyOn(api, 'updateTask').mockReturnValue(new Promise((r) => (resolve = r)));
 
     const first = store.updateTask('a', { status: 'done' });
+    await Promise.resolve(); // let the first call set pending
+    expect(store.isPending('a')).toBe(true);
     await store.updateTask('a', { status: 'in_progress' }); // ignored
     expect(spy).toHaveBeenCalledTimes(1);
     expect(store.tasks.a?.status).toBe('done');

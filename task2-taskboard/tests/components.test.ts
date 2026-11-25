@@ -86,9 +86,9 @@ describe('saving indicator', () => {
   it('disables the row and shows Saving… while an update is in flight', async () => {
     let resolve!: (t: Task) => void;
     vi.spyOn(api, 'updateTask').mockReturnValue(new Promise((r) => (resolve = r)));
-    const { wrapper } = mountBoard([task('a')]);
+    const { store, wrapper } = mountBoard([task('a')]);
 
-    const pending = wrapper.get('[data-testid="row-a"] select[aria-label="Status"]').setValue('done');
+    const pending = store.updateTask('a', { status: 'done' });
     await flushPromises();
     expect(wrapper.get('[data-testid="saving"]').text()).toBe('Saving…');
     expect((wrapper.get('[data-testid="row-a"] select[aria-label="Status"]').element as HTMLSelectElement).disabled).toBe(true);
