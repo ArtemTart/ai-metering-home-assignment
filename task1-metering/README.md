@@ -30,6 +30,24 @@ Settings are in [`.env`](.env): `DEFAULT_CREDIT_LIMIT` (default 5), `QUOTA_PERIO
 
 The limit for a request is the user's row in `user_quotas` if one exists, otherwise `DEFAULT_CREDIT_LIMIT`. Lowering a limit below current usage blocks new requests but doesn't claw back credits already used.
 
+## Project structure
+
+```
+src/
+├── server.ts          entry point: config → db → app → listen
+├── app.ts             Fastify setup, Swagger, route registration
+├── config.ts          reads the environment (.env)
+├── types/             all interfaces and types, no logic (barrel: types/index.ts)
+├── schemas/           JSON schemas, used for both request validation and Swagger
+├── routes/            ai.routes, usage.routes, admin.routes (one Fastify plugin each)
+├── services/          quota.service (limits and evidence), ai.service (simulated AI and timeout)
+├── db/database.ts     SQLite connection and tables
+└── utils/period.ts    period boundaries
+tests/app.test.ts      HTTP-level tests with an in-memory DB, a fake clock and a fake AI
+```
+
+Routes stay thin: they validate input via schemas and delegate to services. Services hold the logic and never see HTTP.
+
 ## How it works
 
 Each request is one row in `usage_events`:

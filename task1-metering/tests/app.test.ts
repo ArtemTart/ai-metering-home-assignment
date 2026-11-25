@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { AiTimeoutError, withTimeout } from '../src/ai.js';
 import { buildApp } from '../src/app.js';
-import { openDb } from '../src/db.js';
-import { createQuota, periodBounds } from '../src/quota.js';
+import { openDb } from '../src/db/database.js';
+import { AiTimeoutError, withTimeout } from '../src/services/ai.service.js';
+import { createQuotaService } from '../src/services/quota.service.js';
+import { periodBounds } from '../src/utils/period.js';
 
 /** Builds the app with an in-memory DB, a controllable clock and an AI that answers instantly unless told otherwise. */
 function setup({ limit = 3, aiTimeoutMs = 50 } = {}) {
@@ -10,7 +11,7 @@ function setup({ limit = 3, aiTimeoutMs = 50 } = {}) {
   let now = new Date('2026-03-15T12:00:00.000Z');
   const ai = { mode: 'ok' as 'ok' | 'fail' | 'hang', calls: 0 };
   const app = buildApp({
-    quota: createQuota(db, { defaultLimit: limit, period: 'month' }, () => now),
+    quota: createQuotaService(db, { defaultLimit: limit, period: 'month' }, () => now),
     ai: async (prompt) => {
       ai.calls++;
       if (ai.mode === 'fail') throw new Error('boom');

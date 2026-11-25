@@ -1,32 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import type { Db } from './db.js';
+import type { Db } from '../db/database.js';
+import type {
+  Clock,
+  QuotaOptions,
+  RefundReason,
+  ReserveResult,
+  Usage,
+  UsageEvent,
+  UsersOverview,
+} from '../types/index.js';
+import { periodBounds } from '../utils/period.js';
 
-export type Period = 'hour' | 'day' | 'month';
-export type Clock = () => Date;
-
-export interface Usage {
-  userId: string;
-  limit: number;
-  used: number;
-  remaining: number;
-  periodStart: string;
-  periodEnd: string;
-}
-
-export type ReserveResult = { ok: true; eventId: string } | { ok: false; usage: Usage };
-
-/** Fixed, calendar-aligned UTC windows: they match billing cycles and ignore DST. */
-export function periodBounds(now: Date, period: Period) {
-  const [y, m, d, h] = [now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours()];
-  const [start, end] = {
-    hour: [Date.UTC(y, m, d, h), Date.UTC(y, m, d, h + 1)],
-    day: [Date.UTC(y, m, d), Date.UTC(y, m, d + 1)],
-    month: [Date.UTC(y, m, 1), Date.UTC(y, m + 1, 1)],
-  }[period];
-  return { start: new Date(start!).toISOString(), end: new Date(end!).toISOString() };
-}
-
-export function createQuota(db: Db, options: { defaultLimit: number; period: Period }, clock: Clock = () => new Date()) {
+export function createQuotaService(db: Db, options: QuotaOptions, clock: Clock = () => new Date()) {
   const userLimit = db.prepare(`SELECT credit_limit FROM user_quotas WHERE user_id = ?`);
   const upsertUserLimit = db.prepare(
     `INSERT INTO user_quotas (user_id, credit_limit, updated_at) VALUES (?, ?, ?)
@@ -81,17 +66,32 @@ export function createQuota(db: Db, options: { defaultLimit: number; period: Per
 
   return {
     usage,
+
     /** Atomically checks the limit and reserves one credit. */
-    reserve: (userId: string) => reserveTx.immediate(userId),
-    commit: (eventId: string) => settleEvent.run('COMMITTED', clock().toISOString(), null, eventId),
+    reserve: (userId: string): ReserveResult => reserveTx.immediate(userId),
+
+    commit(eventId: string): void {
+      settleEvent.run('COMMITTED', clock().toISOString(), null, eventId);
+    },
+
     /** Gives the credit back but keeps the row as evidence of the failed attempt. */
-    refund: (eventId: string, error: string) => settleEvent.run('REFUNDED', clock().toISOString(), error, eventId),
+    refund(eventId: string, reason: RefundReason): void {
+      settleEvent.run('REFUNDED', clock().toISOString(), reason, eventId);
+    },
+
     /** Takes effect on the user's next request. */
     setLimit(userId: string, limit: number): Usage {
       upsertUserLimit.run(userId, limit, clock().toISOString());
       return usage(userId);
     },
-    listUsers() {
+
+    /** Reverts the user to the default limit. */
+    resetLimit(userId: string): Usage {
+      deleteUserLimit.run(userId);
+      return usage(userId);
+    },
+
+    listUsers(): UsersOverview {
       const { start, end } = periodBounds(clock(), options.period);
       const rows = allUsers.all(start) as { userId: string; customLimit: number | null; used: number; refunded: number }[];
       return {
@@ -103,14 +103,10 @@ export function createQuota(db: Db, options: { defaultLimit: number; period: Per
         }),
       };
     },
-    /** Raw ledger rows, newest first (max 500). */
-    listEvents: (userId?: string) => recentEvents.all({ userId: userId ?? null }),
-    /** Reverts the user to the default limit. */
-    resetLimit(userId: string): Usage {
-      deleteUserLimit.run(userId);
-      return usage(userId);
-    },
+
+    /** Raw evidence rows, newest first (max 500). */
+    listEvents: (userId?: string): UsageEvent[] => recentEvents.all({ userId: userId ?? null }) as UsageEvent[],
   };
 }
 
-export type Quota = ReturnType<typeof createQuota>;
+export type QuotaService = ReturnType<typeof createQuotaService>;

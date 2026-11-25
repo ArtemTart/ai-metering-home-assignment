@@ -1,10 +1,4 @@
-export type AiCall = (prompt: string) => Promise<string>;
-
-export interface SimulatedAiOptions {
-  minDelayMs: number;
-  maxDelayMs: number;
-  failureRate: number;
-}
+import type { AiCall, SimulatedAiOptions } from '../types/index.js';
 
 /** Stand-in for a real AI provider: random latency and occasional failures. */
 export function simulatedAi({ minDelayMs, maxDelayMs, failureRate }: SimulatedAiOptions): AiCall {
