@@ -29,4 +29,16 @@ npm test
 
 ## AI tools note
 
-AI (Cursor) was used throughout for scaffolding, tests, and documentation. Every line was reviewed and can be explained; design decisions (reserve→settle, Pinia + computed derived data, SSE) were chosen before code was written.
+AI tools were used throughout this assignment, mainly inside **Cursor**:
+
+- **Claude Opus 5.5** (via Cursor) — primary assistant for scaffolding, implementation, tests, design docs, and production notes.
+- **ChatGPT** and **Gemini** — used as second opinions: some features, edge cases, and design choices were cross-checked and compared against their answers (for example quota concurrency, idempotency, shared-state approaches, and SSE vs WebSocket/polling). Where they disagreed with the Cursor/Claude draft or with each other, the final choice was made after reviewing the trade-offs, not by copying a single model’s output.
+
+How AI was used in practice:
+
+- Propose architecture and trade-offs before writing code (Task 1 design; Task 2 state model).
+- Generate boilerplate (project layout, schemas, test skeletons) that was then edited by hand.
+- Draft and refine tests for edge cases; run them locally and fix failures.
+- Write and trim READMEs / design / production docs.
+
+What AI did **not** replace: deciding the core approach, reading and understanding every submitted line, running the apps and tests locally, and judging what to leave out for a focused solution. Every line in this repo can be explained.
