@@ -23,6 +23,13 @@ export function openDb(path: string): Db {
       error        TEXT
     );
     CREATE INDEX IF NOT EXISTS ix_usage_user_period ON usage_events (user_id, period_start, status);
+
+    -- Per-user limits. Users without a row get DEFAULT_CREDIT_LIMIT.
+    CREATE TABLE IF NOT EXISTS user_quotas (
+      user_id      TEXT PRIMARY KEY,
+      credit_limit INTEGER NOT NULL CHECK (credit_limit >= 0),
+      updated_at   TEXT NOT NULL
+    );
   `);
   return db;
 }

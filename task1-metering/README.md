@@ -23,6 +23,10 @@ Settings are in [`.env`](.env): `DEFAULT_CREDIT_LIMIT` (default 5), `QUOTA_PERIO
 |----------|-------------|
 | `POST /v1/ai/requests` | Header `x-user-id`, body `{"prompt": "..."}`. Returns `200` with the answer, `429` if the limit is reached, `502`/`504` if the AI failed or timed out (credit refunded), or `400` for invalid input. |
 | `GET /v1/users/:userId/usage` | `{ limit, used, remaining, periodStart, periodEnd }` |
+| `PUT /v1/users/:userId/quota` | Body `{"limit": 10}`. Sets the user's credit limit, effective from their next request. |
+| `DELETE /v1/users/:userId/quota` | Removes the custom limit; the user reverts to `DEFAULT_CREDIT_LIMIT`. |
+
+The limit for a request is the user's row in `user_quotas` if one exists, otherwise `DEFAULT_CREDIT_LIMIT`. Lowering a limit below current usage blocks new requests but doesn't claw back credits already used.
 
 ## How it works
 
@@ -38,5 +42,4 @@ Periods are fixed, calendar-aligned UTC windows (e.g. a calendar month).
 
 - **Idempotency keys:** a retried request is charged again. This is described in the design.
 - **Recovery after a crash** between reserve and settle: the row would stay `RESERVED` and keep counting against the limit.
-- **Authentication:** the user is taken from the `x-user-id` header.
-- **Admin API** for changing limits: the limit comes from `.env`.
+- **Authentication:** the user is taken from the `x-user-id` header, and the quota endpoints are open (in production they would require admin rights).

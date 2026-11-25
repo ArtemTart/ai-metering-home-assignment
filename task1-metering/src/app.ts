@@ -113,6 +113,37 @@ export function buildApp({ quota, ai, aiTimeoutMs, logger = false }: AppDeps) {
       },
       async (request) => quota.usage(request.params.userId),
     );
+
+    // Admin operations. Unauthenticated in this demo; in production they would require admin auth.
+    api.put<{ Params: { userId: string }; Body: { limit: number } }>(
+      '/v1/users/:userId/quota',
+      {
+        schema: {
+          summary: "Set a user's credit limit (takes effect on their next request)",
+          params: { type: 'object', required: ['userId'], properties: { userId } },
+          body: {
+            type: 'object',
+            required: ['limit'],
+            additionalProperties: false,
+            properties: { limit: { type: 'integer', minimum: 0, maximum: 1_000_000_000 } },
+          },
+          response: { 200: usageSchema },
+        },
+      },
+      async (request) => quota.setLimit(request.params.userId, request.body.limit),
+    );
+
+    api.delete<{ Params: { userId: string } }>(
+      '/v1/users/:userId/quota',
+      {
+        schema: {
+          summary: "Remove a user's custom limit, reverting to the default",
+          params: { type: 'object', required: ['userId'], properties: { userId } },
+          response: { 200: usageSchema },
+        },
+      },
+      async (request) => quota.resetLimit(request.params.userId),
+    );
   });
 
   return app;

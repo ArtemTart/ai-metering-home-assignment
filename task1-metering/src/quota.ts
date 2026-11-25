@@ -26,7 +26,13 @@ export function periodBounds(now: Date, period: Period) {
   return { start: new Date(start!).toISOString(), end: new Date(end!).toISOString() };
 }
 
-export function createQuota(db: Db, options: { limit: number; period: Period }, clock: Clock = () => new Date()) {
+export function createQuota(db: Db, options: { defaultLimit: number; period: Period }, clock: Clock = () => new Date()) {
+  const userLimit = db.prepare(`SELECT credit_limit FROM user_quotas WHERE user_id = ?`);
+  const upsertUserLimit = db.prepare(
+    `INSERT INTO user_quotas (user_id, credit_limit, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT (user_id) DO UPDATE SET credit_limit = excluded.credit_limit, updated_at = excluded.updated_at`,
+  );
+  const deleteUserLimit = db.prepare(`DELETE FROM user_quotas WHERE user_id = ?`);
   // In-flight (RESERVED) credits count too, otherwise parallel requests could overspend.
   const countUsed = db.prepare(
     `SELECT COUNT(*) AS n FROM usage_events WHERE user_id = ? AND period_start = ? AND status <> 'REFUNDED'`,
@@ -41,14 +47,17 @@ export function createQuota(db: Db, options: { limit: number; period: Period }, 
   function usage(userId: string): Usage {
     const { start, end } = periodBounds(clock(), options.period);
     const { n: used } = countUsed.get(userId, start) as { n: number };
-    return { userId, limit: options.limit, used, remaining: Math.max(0, options.limit - used), periodStart: start, periodEnd: end };
+    const row = userLimit.get(userId) as { credit_limit: number } | undefined;
+    const limit = row?.credit_limit ?? options.defaultLimit;
+    // A limit lowered below current usage blocks new requests; past usage is not clawed back.
+    return { userId, limit, used, remaining: Math.max(0, limit - used), periodStart: start, periodEnd: end };
   }
 
   // IMMEDIATE takes SQLite's write lock before the count, so check-and-insert is atomic
   // even across processes sharing the database file.
   const reserveTx = db.transaction((userId: string): ReserveResult => {
     const current = usage(userId);
-    if (current.used >= options.limit) return { ok: false, usage: current };
+    if (current.remaining === 0) return { ok: false, usage: current };
     const eventId = randomUUID();
     insertEvent.run(eventId, userId, current.periodStart, clock().toISOString());
     return { ok: true, eventId };
@@ -61,6 +70,16 @@ export function createQuota(db: Db, options: { limit: number; period: Period }, 
     commit: (eventId: string) => settleEvent.run('COMMITTED', clock().toISOString(), null, eventId),
     /** Gives the credit back but keeps the row as evidence of the failed attempt. */
     refund: (eventId: string, error: string) => settleEvent.run('REFUNDED', clock().toISOString(), error, eventId),
+    /** Takes effect on the user's next request. */
+    setLimit(userId: string, limit: number): Usage {
+      upsertUserLimit.run(userId, limit, clock().toISOString());
+      return usage(userId);
+    },
+    /** Reverts the user to the default limit. */
+    resetLimit(userId: string): Usage {
+      deleteUserLimit.run(userId);
+      return usage(userId);
+    },
   };
 }
 

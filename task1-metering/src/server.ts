@@ -11,7 +11,7 @@ if (!['hour', 'day', 'month'].includes(period)) throw new Error(`Invalid QUOTA_P
 
 const db = openDb(env.DB_PATH ?? 'data/metering.db');
 const app = buildApp({
-  quota: createQuota(db, { limit: num('DEFAULT_CREDIT_LIMIT', 5), period }),
+  quota: createQuota(db, { defaultLimit: num('DEFAULT_CREDIT_LIMIT', 5), period }),
   ai: simulatedAi({
     minDelayMs: num('AI_MIN_DELAY_MS', 200),
     maxDelayMs: num('AI_MAX_DELAY_MS', 1500),

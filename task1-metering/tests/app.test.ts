@@ -10,7 +10,7 @@ function setup({ limit = 3, aiTimeoutMs = 50 } = {}) {
   let now = new Date('2026-03-15T12:00:00.000Z');
   const ai = { mode: 'ok' as 'ok' | 'fail' | 'hang', calls: 0 };
   const app = buildApp({
-    quota: createQuota(db, { limit, period: 'month' }, () => now),
+    quota: createQuota(db, { defaultLimit: limit, period: 'month' }, () => now),
     ai: async (prompt) => {
       ai.calls++;
       if (ai.mode === 'fail') throw new Error('boom');
@@ -115,10 +115,56 @@ describe('GET /v1/users/:userId/usage', () => {
     });
   });
 
-  it('is published in the Swagger spec together with the AI endpoint', async () => {
+  it('publishes every endpoint in the Swagger spec', async () => {
     t = setup();
     const spec = (await t.app.inject({ url: '/docs/json' })).json();
-    expect(Object.keys(spec.paths).sort()).toEqual(['/v1/ai/requests', '/v1/users/{userId}/usage']);
+    expect(Object.keys(spec.paths).sort()).toEqual([
+      '/v1/ai/requests',
+      '/v1/users/{userId}/quota',
+      '/v1/users/{userId}/usage',
+    ]);
+  });
+});
+
+describe('PUT / DELETE /v1/users/:userId/quota', () => {
+  const setQuota = (limit: unknown, user = 'alice') =>
+    t.app.inject({ method: 'PUT', url: `/v1/users/${user}/quota`, payload: { limit } });
+
+  it('raises a user’s limit immediately, without affecting other users', async () => {
+    t = setup({ limit: 1 });
+    await t.send();
+    expect((await t.send()).statusCode).toBe(429);
+
+    const res = await setQuota(3);
+    expect(res.json()).toMatchObject({ limit: 3, used: 1, remaining: 2 });
+    expect((await t.send()).statusCode).toBe(200);
+    expect((await t.usage('bob')).limit).toBe(1);
+  });
+
+  it('blocks new requests when lowered below current usage, without clawing back', async () => {
+    t = setup({ limit: 3 });
+    await t.send();
+    await t.send();
+    expect((await setQuota(1)).json()).toMatchObject({ limit: 1, used: 2, remaining: 0 });
+    expect((await t.send()).statusCode).toBe(429);
+  });
+
+  it('blocks everything with a limit of 0', async () => {
+    t = setup();
+    await setQuota(0);
+    expect((await t.send()).statusCode).toBe(429);
+  });
+
+  it('reverts to the default limit on DELETE', async () => {
+    t = setup({ limit: 3 });
+    await setQuota(10);
+    const res = await t.app.inject({ method: 'DELETE', url: '/v1/users/alice/quota' });
+    expect(res.json()).toMatchObject({ limit: 3 });
+  });
+
+  it.each([[-1], [1.5], ['ten'], [null]])('rejects an invalid limit (%s)', async (limit) => {
+    t = setup();
+    expect((await setQuota(limit)).statusCode).toBe(400);
   });
 });
 
