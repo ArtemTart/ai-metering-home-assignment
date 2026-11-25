@@ -32,7 +32,7 @@ export const aiRoutes: FastifyPluginAsync<AiRouteOptions> = async (api, { quota,
           usage: reservation.usage,
         });
       case 'replay':
-        return reply.header('idempotent-replayed', 'true').send({ ...reservation.response, usage: quota.usage(user) });
+        return reply.header('idempotent-replayed', 'true').send({ ...reservation.response, replayed: true, usage: quota.usage(user) });
       case 'in_progress':
         return reply.code(409).send({
           error: 'REQUEST_IN_PROGRESS',
@@ -61,6 +61,6 @@ export const aiRoutes: FastifyPluginAsync<AiRouteOptions> = async (api, { quota,
 
     const response = { requestId: eventId, result };
     quota.commit(eventId, response);
-    return { ...response, usage: quota.usage(user) };
+    return { ...response, replayed: false, usage: quota.usage(user) };
   });
 };

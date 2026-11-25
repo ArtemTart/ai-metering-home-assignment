@@ -64,7 +64,7 @@ Send an optional `Idempotency-Key` header, e.g. a UUID generated once per reques
 
 | Repeat of the key | Response |
 |---|---|
-| First request finished | The stored answer, `200` with `idempotent-replayed: true`. Not charged, AI not called. |
+| First request finished | The stored answer, `200` with `"replayed": true` (and header `idempotent-replayed: true`). Not charged, AI not called. |
 | First request still running | `409 REQUEST_IN_PROGRESS` |
 | Used with a different prompt | `409 IDEMPOTENCY_KEY_REUSED` |
 | First attempt failed (refunded) | A real new attempt, because the user never got an answer |

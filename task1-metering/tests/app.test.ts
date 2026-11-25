@@ -42,7 +42,7 @@ describe('POST /v1/ai/requests', () => {
     t = setup();
     const res = await t.send();
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ result: 'answer: hi', usage: { used: 1, remaining: 2 } });
+    expect(res.json()).toMatchObject({ result: 'answer: hi', replayed: false, usage: { used: 1, remaining: 2 } });
     expect(t.events()).toEqual([{ status: 'COMMITTED', error: null }]);
   });
 
@@ -133,7 +133,8 @@ describe('Idempotency-Key', () => {
 
     expect(retry.statusCode).toBe(200);
     expect(retry.headers['idempotent-replayed']).toBe('true');
-    expect(retry.json()).toMatchObject({ requestId: first.json().requestId, result: first.json().result });
+    expect(first.json().replayed).toBe(false);
+    expect(retry.json()).toMatchObject({ requestId: first.json().requestId, result: first.json().result, replayed: true });
     expect(t.ai.calls).toBe(1);
     expect((await t.usage()).used).toBe(1);
   });
