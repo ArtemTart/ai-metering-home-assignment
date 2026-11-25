@@ -240,6 +240,18 @@ describe('usage, limit and ledger endpoints', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('publishes an OpenAPI spec covering every endpoint', async () => {
+    t = createTestApp();
+    const spec = (await t.app.inject({ method: 'GET', url: '/docs/json' })).json();
+    expect(Object.keys(spec.paths).sort()).toEqual([
+      '/health',
+      '/v1/ai/requests',
+      '/v1/users/{userId}/ledger',
+      '/v1/users/{userId}/limit',
+      '/v1/users/{userId}/usage',
+    ]);
+  });
+
   it('exposes the ledger for audits, including refunded attempts', async () => {
     t = createTestApp();
     await aiRequest(t);

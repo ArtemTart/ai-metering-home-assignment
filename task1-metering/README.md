@@ -12,7 +12,9 @@ Requires Node.js 20+.
 npm start
 ```
 
-This installs dependencies (via `prestart`) and starts the server on `http://127.0.0.1:3000`. The SQLite database is created at `data/metering.db`.
+This installs dependencies (via `prestart`) and starts the server on `http://localhost:3000`. The SQLite database is created at `data/metering.db`.
+
+**Interactive API docs (Swagger UI): <http://localhost:3000/docs>**. The OpenAPI spec is at `/docs/json`. It is generated from the same JSON schemas that validate requests, so the docs can't drift from the actual validation.
 
 ```bash
 npm test          # all tests (unit, HTTP integration, multi-process concurrency)
@@ -30,7 +32,7 @@ npm run typecheck
 | `AI_FAILURE_RATE` | `0.1` | Probability that the simulated AI fails |
 | `RESERVATION_GRACE_MS` | `30000` | Extra time after the timeout before an unsettled reservation counts as orphaned |
 | `REAPER_INTERVAL_MS` | `10000` | How often orphaned reservations are refunded |
-| `PORT`, `HOST`, `DB_PATH`, `LOG_LEVEL` | `3000`, `127.0.0.1`, `data/metering.db`, `info` | |
+| `PORT`, `HOST`, `DB_PATH`, `LOG_LEVEL` | `3000`, `localhost`, `data/metering.db`, `info` | |
 
 Invalid values stop the server at startup with a clear message.
 
@@ -82,7 +84,7 @@ The ledger is append-only, and SQLite triggers reject deletes and rewrites.
 - Ledger immutability enforced by the database; a ledger endpoint for audits.
 - Graceful shutdown that waits for in-flight requests to settle.
 
-## Tests (57)
+## Tests (58)
 
 - `tests/metering.test.ts`: the quota, periods, settlement races, idempotency states, immutability, and a randomized test that the counters always equal the ledger.
 - `tests/api.test.ts`: every HTTP status path, parallel requests (exactly `limit` succeed), timeouts, store outage, settlement failure recovered by the reaper, and validation.

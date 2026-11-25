@@ -47,7 +47,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   const config: Config = {
     port: int(env, 'PORT', 3000, 1),
-    host: env.HOST ?? '127.0.0.1',
+    // 'localhost' binds both 127.0.0.1 and ::1, so browsers that resolve localhost to IPv6 still connect.
+    host: env.HOST ?? 'localhost',
     dbPath: env.DB_PATH ?? 'data/metering.db',
     defaultLimit: int(env, 'DEFAULT_CREDIT_LIMIT', 100),
     period,

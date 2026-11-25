@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
+import swagger from '@fastify/swagger';
+import swaggerUi from '@fastify/swagger-ui';
 import { Ajv } from 'ajv';
 import Fastify, { type FastifyBaseLogger, type FastifyError, type FastifyServerOptions } from 'fastify';
 import { AiTimeoutError, completeWithTimeout, type AiClient } from './ai.js';
@@ -108,121 +110,162 @@ export function buildApp(deps: AppDeps) {
     }
   }
 
-  app.post<AiRequestRoute>(
-    '/v1/ai/requests',
-    {
-      schema: {
-        headers: userHeaders,
-        body: {
-          type: 'object',
-          required: ['prompt'],
-          additionalProperties: false,
-          properties: { prompt: { type: 'string', minLength: 1, maxLength: 8000 } },
+  app.register(swagger, {
+    openapi: {
+      info: {
+        title: 'AI Usage Metering & Quota API',
+        description: 'Every AI request costs one credit. Credits are reserved before the AI call and committed or refunded after it.',
+        version: '1.0.0',
+      },
+      tags: [
+        { name: 'ai', description: 'Metered AI requests' },
+        { name: 'usage', description: 'Quota, usage and evidence' },
+        { name: 'admin', description: 'Operator endpoints (unauthenticated in this demo)' },
+      ],
+    },
+  });
+  app.register(swaggerUi, { routePrefix: '/docs' });
+
+  // Routes live in a plugin registered after swagger, so its onRoute hook sees all of them.
+  app.register(async (api) => {
+    api.post<AiRequestRoute>(
+      '/v1/ai/requests',
+      {
+        schema: {
+          tags: ['ai'],
+          summary: 'Make a metered AI request (costs 1 credit)',
+          description: [
+            'Reserves one credit, calls the (simulated) AI, then commits the credit on success or refunds it on failure.',
+            'Send an `Idempotency-Key` to make retries safe: a repeat returns the stored response without charging.',
+            '',
+            '`200` success · `400` invalid input · `409` idempotency conflict · `413` body too large ·',
+            '`429` quota exceeded (`Retry-After`) · `502`/`504` AI failed/timed out, credit refunded · `503` store down, not charged',
+          ].join('\n'),
+          headers: userHeaders,
+          body: {
+            type: 'object',
+            required: ['prompt'],
+            additionalProperties: false,
+            properties: { prompt: { type: 'string', minLength: 1, maxLength: 8000 } },
+          },
         },
       },
-    },
-    async (request, reply) => {
-      const userId = request.headers['x-user-id'];
-      const outcome = metering.reserve({
-        userId,
-        idempotencyKey: request.headers['idempotency-key'],
-        requestHash: hashRequest(request.body),
-      });
-
-      switch (outcome.kind) {
-        case 'quota_exceeded': {
-          const retryAfter = Math.max(1, Math.ceil((Date.parse(outcome.usage.periodEnd) - clock().getTime()) / 1000));
-          return reply
-            .code(429)
-            .header('retry-after', String(retryAfter))
-            .send({ error: 'QUOTA_EXCEEDED', message: 'Credit limit reached for this period.', usage: outcome.usage });
-        }
-        case 'in_progress':
-          return reply.code(409).send({
-            error: 'REQUEST_IN_PROGRESS',
-            message: 'A request with this Idempotency-Key is still being processed.',
-            requestId: outcome.requestId,
-          });
-        case 'idempotency_mismatch':
-          return reply.code(409).send({
-            error: 'IDEMPOTENCY_KEY_REUSED',
-            message: 'This Idempotency-Key was already used with a different request body.',
-            requestId: outcome.requestId,
-          });
-        case 'replay':
-          return reply.header('idempotent-replayed', 'true').send({ ...outcome.response, usage: usageOrNull(userId) });
-        case 'reserved':
-          break;
-      }
-
-      const { requestId } = outcome;
-      const started = performance.now();
-      let result: string;
-      try {
-        result = await completeWithTimeout(ai, request.body.prompt, config.aiTimeoutMs);
-      } catch (err) {
-        const reason = err instanceof AiTimeoutError ? 'AI_TIMEOUT' : 'AI_ERROR';
-        const latencyMs = performance.now() - started;
-        request.log.warn({ err, requestId, reason }, 'AI call failed; refunding credit');
-        await settle(request.log, requestId, () => metering.refund(requestId, reason, latencyMs));
-        return reply.code(reason === 'AI_TIMEOUT' ? 504 : 502).send({
-          error: reason,
-          message: 'The AI call did not complete. Your credit was refunded.',
-          requestId,
-          creditRefunded: true,
-          usage: usageOrNull(userId),
+      async (request, reply) => {
+        const userId = request.headers['x-user-id'];
+        const outcome = metering.reserve({
+          userId,
+          idempotencyKey: request.headers['idempotency-key'],
+          requestHash: hashRequest(request.body),
         });
+
+        switch (outcome.kind) {
+          case 'quota_exceeded': {
+            const retryAfter = Math.max(1, Math.ceil((Date.parse(outcome.usage.periodEnd) - clock().getTime()) / 1000));
+            return reply
+              .code(429)
+              .header('retry-after', String(retryAfter))
+              .send({ error: 'QUOTA_EXCEEDED', message: 'Credit limit reached for this period.', usage: outcome.usage });
+          }
+          case 'in_progress':
+            return reply.code(409).send({
+              error: 'REQUEST_IN_PROGRESS',
+              message: 'A request with this Idempotency-Key is still being processed.',
+              requestId: outcome.requestId,
+            });
+          case 'idempotency_mismatch':
+            return reply.code(409).send({
+              error: 'IDEMPOTENCY_KEY_REUSED',
+              message: 'This Idempotency-Key was already used with a different request body.',
+              requestId: outcome.requestId,
+            });
+          case 'replay':
+            return reply.header('idempotent-replayed', 'true').send({ ...outcome.response, usage: usageOrNull(userId) });
+          case 'reserved':
+            break;
+        }
+
+        const { requestId } = outcome;
+        const started = performance.now();
+        let result: string;
+        try {
+          result = await completeWithTimeout(ai, request.body.prompt, config.aiTimeoutMs);
+        } catch (err) {
+          const reason = err instanceof AiTimeoutError ? 'AI_TIMEOUT' : 'AI_ERROR';
+          const latencyMs = performance.now() - started;
+          request.log.warn({ err, requestId, reason }, 'AI call failed; refunding credit');
+          await settle(request.log, requestId, () => metering.refund(requestId, reason, latencyMs));
+          return reply.code(reason === 'AI_TIMEOUT' ? 504 : 502).send({
+            error: reason,
+            message: 'The AI call did not complete. Your credit was refunded.',
+            requestId,
+            creditRefunded: true,
+            usage: usageOrNull(userId),
+          });
+        }
+
+        const response = { requestId, result };
+        const latencyMs = performance.now() - started;
+        await settle(request.log, requestId, () => metering.commit(requestId, { latencyMs, response }));
+        return { ...response, usage: usageOrNull(userId) };
+      },
+    );
+
+    api.get<UserRoute>(
+      '/v1/users/:userId/usage',
+      {
+        schema: {
+          tags: ['usage'],
+          summary: "Current period usage and remaining credits",
+          description: '`remaining = limit - used - reserved`; in-flight requests count against the quota.',
+          params: userParams,
+        },
+      },
+      async (request) => metering.getUsage(request.params.userId),
+    );
+
+    api.get<UserRoute & { Querystring: { limit?: number } }>(
+      '/v1/users/:userId/ledger',
+      {
+        schema: {
+          tags: ['usage'],
+          summary: 'Evidence ledger for audits (newest first, includes refunded attempts)',
+          params: userParams,
+          querystring: {
+            type: 'object',
+            properties: { limit: { type: 'integer', minimum: 1, maximum: 1000, default: 100 } },
+          },
+        },
+      },
+      async (request) => ({ entries: metering.listLedger(request.params.userId, request.query.limit) }),
+    );
+
+    // Admin endpoint. Unauthenticated here; in production it would sit behind admin auth.
+    api.put<UserRoute & { Body: { limit: number } }>(
+      '/v1/users/:userId/limit',
+      {
+        schema: {
+          tags: ['admin'],
+          summary: 'Set a per-user credit limit (takes effect immediately)',
+          params: userParams,
+          body: {
+            type: 'object',
+            required: ['limit'],
+            additionalProperties: false,
+            properties: { limit: { type: 'integer', minimum: 0, maximum: 1_000_000_000 } },
+          },
+        },
+      },
+      async (request) => metering.setLimit(request.params.userId, request.body.limit),
+    );
+
+    api.get('/health', { schema: { tags: ['admin'], summary: 'Liveness and store health' } }, async (_request, reply) => {
+      try {
+        db.prepare('SELECT 1').get();
+        return { status: 'ok' };
+      } catch {
+        return reply.code(503).send({ status: 'store_unavailable' });
       }
-
-      const response = { requestId, result };
-      const latencyMs = performance.now() - started;
-      await settle(request.log, requestId, () => metering.commit(requestId, { latencyMs, response }));
-      return { ...response, usage: usageOrNull(userId) };
-    },
-  );
-
-  app.get<UserRoute>('/v1/users/:userId/usage', { schema: { params: userParams } }, async (request) =>
-    metering.getUsage(request.params.userId),
-  );
-
-  app.get<UserRoute & { Querystring: { limit?: number } }>(
-    '/v1/users/:userId/ledger',
-    {
-      schema: {
-        params: userParams,
-        querystring: {
-          type: 'object',
-          properties: { limit: { type: 'integer', minimum: 1, maximum: 1000, default: 100 } },
-        },
-      },
-    },
-    async (request) => ({ entries: metering.listLedger(request.params.userId, request.query.limit) }),
-  );
-
-  // Admin endpoint. Unauthenticated here; in production it would sit behind admin auth.
-  app.put<UserRoute & { Body: { limit: number } }>(
-    '/v1/users/:userId/limit',
-    {
-      schema: {
-        params: userParams,
-        body: {
-          type: 'object',
-          required: ['limit'],
-          additionalProperties: false,
-          properties: { limit: { type: 'integer', minimum: 0, maximum: 1_000_000_000 } },
-        },
-      },
-    },
-    async (request) => metering.setLimit(request.params.userId, request.body.limit),
-  );
-
-  app.get('/health', async (_request, reply) => {
-    try {
-      db.prepare('SELECT 1').get();
-      return { status: 'ok' };
-    } catch {
-      return reply.code(503).send({ status: 'store_unavailable' });
-    }
+    });
   });
 
   return { app, metering };
