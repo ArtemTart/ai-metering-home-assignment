@@ -8,8 +8,13 @@ Design document: [`docs/DESIGN.md`](docs/DESIGN.md). Production plan: [`docs/PRO
 
 Requires Node.js 20.6+.
 
+One command to run (installs dependencies and starts the server):
+
 ```bash
-npm start     # installs dependencies and starts on http://localhost:3000
+npm start     # http://localhost:3000  · Swagger: /docs
+```
+
+```bash
 npm test
 ```
 

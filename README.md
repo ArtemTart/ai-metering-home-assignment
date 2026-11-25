@@ -1,15 +1,14 @@
 # Developer Home Assignment
 
-Two **independent** tasks in one repo. Each has its own folder, dependencies, README, and `npm start` / `npm test`. Run them separately from their own directories.
+Two **independent** tasks in one repo. Each starts with **one command** (`npm start`) from its own folder.
 
 Requires Node.js 20.6+.
 
 ## Task 1 — AI Usage Metering & Quota
 
 ```bash
-cd task1-metering
-npm start    # http://localhost:3000  · Swagger: /docs
-npm test
+cd task1-metering && npm start
+# http://localhost:3000  · Swagger: /docs
 ```
 
 Design: [`task1-metering/docs/DESIGN.md`](task1-metering/docs/DESIGN.md) · Production: [`task1-metering/docs/PRODUCTION.md`](task1-metering/docs/PRODUCTION.md) · Details: [`task1-metering/README.md`](task1-metering/README.md)
@@ -17,17 +16,15 @@ Design: [`task1-metering/docs/DESIGN.md`](task1-metering/docs/DESIGN.md) · Prod
 ## Task 2 — Shared-State Team Task Board
 
 ```bash
-cd task2-taskboard
-npm start    # http://localhost:5173  (mock server on :3001)
-npm test
+cd task2-taskboard && npm start
+# http://localhost:5173  · mock server on :3001
 ```
 
 Details: [`task2-taskboard/README.md`](task2-taskboard/README.md)
 
-Optional convenience from the repo root (still runs each project on its own):
-
 ```bash
-npm test    # runs each task's tests in turn
+# optional: run each project's tests from the repo root
+npm test
 ```
 
 ## AI tools note
